@@ -21,14 +21,17 @@ function App() {
         ) : (
           <div className="grid">
             
-            {/* Kamera-Stream */}
+            {/* Kamera-Stream via go2rtc (WebRTC oder MP4) */}
             <div className="card camera-card">
               <h2>Kamera</h2>
               <div className="camera-feed">
-                <img 
-                  src={`http://${window.location.hostname}:8080/stream`} 
-                  alt="Bambu P1S Live Stream" 
-                  onError={(e) => { e.target.style.display = 'none'; }} 
+                <video 
+                  autoPlay 
+                  playsInline 
+                  muted 
+                  controls
+                  src={`http://${window.location.hostname}:1984/api/stream.mp4?src=bambu_cam`} 
+                  style={{ width: '100%', borderRadius: '8px', minHeight: '200px', backgroundColor: '#000' }}
                 />
               </div>
             </div>
