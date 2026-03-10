@@ -1,1 +1,4 @@
-/bin/bash: line 1: go: command not found
+2026/03/10 21:40:21 [MQTT] Verbunden mit Bambu Drucker!
+2026/03/10 21:40:21 [HTTP] Backend läuft auf :8080
+2026/03/10 21:40:25 [CMD] Licht AN
+2026/03/10 21:40:26 [CMD] Licht AUS
