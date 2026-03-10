@@ -4,10 +4,13 @@ import (
 	"bufio"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"sync"
+	"sync/atomic"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/gorilla/websocket"
@@ -26,9 +29,10 @@ var (
 	upgrader = websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool { return true },
 	}
-	clients   = make(map[*websocket.Conn]bool)
-	clientsMu sync.Mutex
-	mqttClient mqtt.Client
+	clients     = make(map[*websocket.Conn]bool)
+	clientsMu   sync.Mutex
+	mqttClient  mqtt.Client
+	seqCounter  uint64
 )
 
 func main() {
@@ -73,6 +77,27 @@ func messageHandler(client mqtt.Client, msg mqtt.Message) {
 	}
 }
 
+func nextSequenceID() string {
+	return strconv.FormatUint(atomic.AddUint64(&seqCounter, 1), 10)
+}
+
+func sendLightCommand(mode string) {
+	payload := map[string]any{
+		"system": map[string]any{
+			"sequence_id":  nextSequenceID(),
+			"command":      "ledctrl",
+			"led_node":     "chamber_light",
+			"led_mode":     mode,
+			"led_on_time":  0,
+			"led_off_time": 0,
+			"loop_times":   0,
+			"interval_time": 0,
+		},
+	}
+	b, _ := json.Marshal(payload)
+	mqttClient.Publish(cmdTopic, 0, false, b)
+}
+
 func wsEndpoint(w http.ResponseWriter, r *http.Request) {
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -90,17 +115,15 @@ func wsEndpoint(w http.ResponseWriter, r *http.Request) {
 			clientsMu.Unlock()
 			break
 		}
-		
-		// Einfacher Befehls-Router für einkommende WebSocket-Nachrichten
+
 		command := string(msg)
-		if command == "light_on" {
+		switch command {
+		case "light_on":
 			log.Println("[CMD] Licht AN")
-			payload := `{"system": {"sequence_id": "2", "command": "ledctrl", "led_node": "chamber_light", "led_mode": "on", "led_on_time": 500, "led_off_time": 500, "loop_times": 0, "cb_pause": 0}}`
-			mqttClient.Publish(cmdTopic, 0, false, payload)
-		} else if command == "light_off" {
+			sendLightCommand("on")
+		case "light_off":
 			log.Println("[CMD] Licht AUS")
-			payload := `{"system": {"sequence_id": "2", "command": "ledctrl", "led_node": "chamber_light", "led_mode": "off", "led_on_time": 500, "led_off_time": 500, "loop_times": 0, "cb_pause": 0}}`
-			mqttClient.Publish(cmdTopic, 0, false, payload)
+			sendLightCommand("off")
 		}
 	}
 }
