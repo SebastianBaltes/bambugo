@@ -96,9 +96,12 @@ func wsEndpoint(w http.ResponseWriter, r *http.Request) {
 // und liefert pures MJPEG an den Browser
 func camHandler(w http.ResponseWriter, r *http.Request) {
 	// 1. Dem Drucker per MQTT sagen, dass er die Kamera anwerfen soll
-	log.Println("[CAM] Sende webcam_start Kommando...")
-	startCmd := `{"system": {"sequence_id": "1", "command": "webcam_start"}}`
-	mqttClient.Publish(cmdTopic, 0, false, startCmd)
+	// log.Println("[CAM] Sende webcam_start Kommando...")
+	// startCmd := `{"system": {"sequence_id": "1", "command": "webcam_start"}}`
+	// mqttClient.Publish(cmdTopic, 0, false, startCmd)
+
+	// Kurz warten, bis der Drucker den Video-Server gestartet hat
+	// time.Sleep(3 * time.Second)
 
 	// CORS Headers & MJPEG Content Type setzen
 	w.Header().Set("Access-Control-Allow-Origin", "*")
