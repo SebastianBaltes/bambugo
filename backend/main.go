@@ -83,11 +83,24 @@ func wsEndpoint(w http.ResponseWriter, r *http.Request) {
 	clientsMu.Unlock()
 
 	for {
-		if _, _, err := ws.ReadMessage(); err != nil {
+		_, msg, err := ws.ReadMessage()
+		if err != nil {
 			clientsMu.Lock()
 			delete(clients, ws)
 			clientsMu.Unlock()
 			break
+		}
+		
+		// Einfacher Befehls-Router für einkommende WebSocket-Nachrichten
+		command := string(msg)
+		if command == "light_on" {
+			log.Println("[CMD] Licht AN")
+			payload := `{"system": {"sequence_id": "2", "command": "ledctrl", "led_node": "chamber_light", "led_mode": "on", "led_on_time": 500, "led_off_time": 500, "loop_times": 0, "cb_pause": 0}}`
+			mqttClient.Publish(cmdTopic, 0, false, payload)
+		} else if command == "light_off" {
+			log.Println("[CMD] Licht AUS")
+			payload := `{"system": {"sequence_id": "2", "command": "ledctrl", "led_node": "chamber_light", "led_mode": "off", "led_on_time": 500, "led_off_time": 500, "loop_times": 0, "cb_pause": 0}}`
+			mqttClient.Publish(cmdTopic, 0, false, payload)
 		}
 	}
 }
