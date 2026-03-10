@@ -24,7 +24,6 @@ export function usePrinter(url = `ws://${window.location.hostname}:8080/ws`) {
       ws.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data);
-          // Bambu Drucker senden oft verschachtelte "print" Objekte in ihren Reports
           if (payload.print) {
             setData((prev) => ({ ...prev, ...payload.print }));
           }
@@ -38,11 +37,17 @@ export function usePrinter(url = `ws://${window.location.hostname}:8080/ws`) {
 
     return () => {
       if (wsRef.current) {
-        wsRef.current.onclose = null; // Prevent reconnect loop on unmount
+        wsRef.current.onclose = null; 
         wsRef.current.close();
       }
     };
   }, [url]);
 
-  return { data, connected };
+  const sendCommand = (cmd) => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(cmd);
+    }
+  };
+
+  return { data, connected, sendCommand };
 }

@@ -3,7 +3,7 @@ import { usePrinter } from './hooks/usePrinter';
 import './App.css';
 
 function App() {
-  const { data, connected } = usePrinter();
+  const { data, connected, sendCommand } = usePrinter();
 
   return (
     <div className="dashboard-container">
@@ -33,6 +33,15 @@ function App() {
                   src={`http://${window.location.hostname}:1984/api/stream.mp4?src=bambu_cam`} 
                   style={{ width: '100%', borderRadius: '8px', minHeight: '200px', backgroundColor: '#000' }}
                 />
+              </div>
+            </div>
+
+            {/* Steuerung */}
+            <div className="card control-card">
+              <h2>Beleuchtung</h2>
+              <div className="button-group">
+                <button className="btn btn-on" onClick={() => sendCommand('light_on')}>💡 An</button>
+                <button className="btn btn-off" onClick={() => sendCommand('light_off')}>🌙 Aus</button>
               </div>
             </div>
 
