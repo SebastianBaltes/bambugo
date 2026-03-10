@@ -79,6 +79,19 @@ body {
   text-align: center;
 }
 
+.camera-card {
+  grid-column: 1 / -1; 
+  padding: 1rem;
+}
+
+.camera-feed img {
+  width: 100%;
+  border-radius: 8px;
+  background-color: #000;
+  min-height: 200px;
+  object-fit: cover;
+}
+
 .card h2 {
   font-size: 1rem;
   color: #666;

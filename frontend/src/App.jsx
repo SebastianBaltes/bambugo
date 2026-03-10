@@ -21,6 +21,18 @@ function App() {
         ) : (
           <div className="grid">
             
+            {/* Kamera-Stream */}
+            <div className="card camera-card">
+              <h2>Kamera</h2>
+              <div className="camera-feed">
+                <img 
+                  src={`http://${window.location.hostname}:8080/stream`} 
+                  alt="Bambu P1S Live Stream" 
+                  onError={(e) => { e.target.style.display = 'none'; }} 
+                />
+              </div>
+            </div>
+
             <div className="card status-card">
               <h2>Status</h2>
               <div className="value large">{data.gcode_state || 'IDLE'}</div>
