@@ -190,7 +190,18 @@ function App() {
                 ) : (
                   files.map((f, i) => (
                     <div key={i} className="file-item">
-                      📄 {f}
+                      <span className="file-name">📄 {f}</span>
+                      <button 
+                        className="btn-mini btn-print" 
+                        disabled={data.gcode_state !== 'IDLE'}
+                        onClick={() => {
+                          if(window.confirm(`Soll der Druck von "${f}" gestartet werden?`)) {
+                            sendCommand(`print_file:${f}`);
+                          }
+                        }}
+                      >
+                        Drucken
+                      </button>
                     </div>
                   ))
                 )}

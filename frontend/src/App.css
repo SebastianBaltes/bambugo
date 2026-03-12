@@ -266,9 +266,40 @@ body {
   padding: 8px;
   border-bottom: 1px solid #f9f9f9;
   font-size: 0.95rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.file-name {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex: 1;
+  margin-right: 10px;
+}
+
+.btn-mini {
+  padding: 4px 10px;
+  font-size: 0.75rem;
+  border: none;
+  border-radius: 4px;
+  font-weight: 600;
+  cursor: pointer;
+  color: white;
+}
+
+.btn-print {
+  background-color: #27ae60;
+}
+
+.btn-mini:disabled {
+  background-color: #ccc;
+  cursor: not-allowed;
+}
+
+.btn-mini:active:not(:disabled) {
+  filter: brightness(0.8);
 }
 
 .file-item:last-child {
