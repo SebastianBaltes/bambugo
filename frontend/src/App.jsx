@@ -48,12 +48,16 @@ function App() {
               <h2>Druckersteuerung</h2>
               <div className="button-group main-controls">
                 {data.gcode_state === 'PAUSE' ? (
-                   <button className="btn btn-resume" onClick={() => sendCommand('print_resume')}>▶️ Weiter</button>
+                   <button className="btn btn-resume" onClick={() => {
+                     if(window.confirm('Druck fortsetzen?')) sendCommand('print_resume')
+                   }}>▶️ Weiter</button>
                 ) : (
-                   <button className="btn btn-pause" onClick={() => sendCommand('print_pause')}>⏸️ Pause</button>
+                   <button className="btn btn-pause" onClick={() => {
+                     if(window.confirm('Druck pausieren?')) sendCommand('print_pause')
+                   }}>⏸️ Pause</button>
                 )}
                 <button className="btn btn-stop" onClick={() => {
-                  if(window.confirm('Druck wirklich abbrechen?')) sendCommand('print_stop')
+                  if(window.confirm('Druck wirklich komplett abbrechen?')) sendCommand('print_stop')
                 }}>⏹️ Stop</button>
               </div>
               <div className="button-group light-controls">
