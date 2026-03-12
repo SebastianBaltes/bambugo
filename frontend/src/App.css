@@ -123,9 +123,15 @@ body {
   margin-top: 10px;
 }
 
+.main-controls {
+  margin-bottom: 15px;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 15px;
+}
+
 .btn {
   flex: 1;
-  padding: 12px 20px;
+  padding: 12px 10px;
   border: none;
   border-radius: 8px;
   font-size: 1rem;
@@ -133,22 +139,34 @@ body {
   cursor: pointer;
   transition: all 0.2s ease;
   color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
 }
 
 .btn-on {
   background-color: #28a745;
 }
 
-.btn-on:active {
-  background-color: #218838;
-}
-
 .btn-off {
   background-color: #6c757d;
 }
 
-.btn-off:active {
-  background-color: #5a6268;
+.btn-pause {
+  background-color: #f39c12;
+}
+
+.btn-resume {
+  background-color: #27ae60;
+}
+
+.btn-stop {
+  background-color: #e74c3c;
+}
+
+.btn:active {
+  filter: brightness(0.8);
 }
 
 @media (max-width: 600px) {

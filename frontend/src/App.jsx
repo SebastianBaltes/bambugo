@@ -38,10 +38,20 @@ function App() {
 
             {/* Steuerung */}
             <div className="card control-card">
-              <h2>Beleuchtung</h2>
-              <div className="button-group">
-                <button className="btn btn-on" onClick={() => sendCommand('light_on')}>💡 An</button>
-                <button className="btn btn-off" onClick={() => sendCommand('light_off')}>🌙 Aus</button>
+              <h2>Druckersteuerung</h2>
+              <div className="button-group main-controls">
+                {data.gcode_state === 'PAUSE' ? (
+                   <button className="btn btn-resume" onClick={() => sendCommand('print_resume')}>▶️ Weiter</button>
+                ) : (
+                   <button className="btn btn-pause" onClick={() => sendCommand('print_pause')}>⏸️ Pause</button>
+                )}
+                <button className="btn btn-stop" onClick={() => {
+                  if(window.confirm('Druck wirklich abbrechen?')) sendCommand('print_stop')
+                }}>⏹️ Stop</button>
+              </div>
+              <div className="button-group light-controls">
+                <button className="btn btn-on" onClick={() => sendCommand('light_on')}>💡 Licht An</button>
+                <button className="btn btn-off" onClick={() => sendCommand('light_off')}>🌙 Licht Aus</button>
               </div>
             </div>
 
