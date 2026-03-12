@@ -1,9 +1,56 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { usePrinter } from './hooks/usePrinter';
 import './App.css';
 
 function App() {
   const { data, connected, sendCommand } = usePrinter();
+  const [files, setFiles] = useState([]);
+  const [uploading, setUploading] = useState(false);
+
+  const backendUrl = `http://${window.location.hostname}:8080`;
+
+  useEffect(() => {
+    fetchFiles();
+  }, []);
+
+  const fetchFiles = async () => {
+    try {
+      const res = await fetch(`${backendUrl}/files`);
+      if (res.ok) {
+        const list = await res.json();
+        setFiles(list || []);
+      }
+    } catch (e) {
+      console.error('Fehler beim Laden der Dateien:', e);
+    }
+  };
+
+  const handleUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    setUploading(true);
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const res = await fetch(`${backendUrl}/upload`, {
+        method: 'POST',
+        body: formData,
+      });
+      if (res.ok) {
+        alert('Upload erfolgreich!');
+        fetchFiles();
+      } else {
+        alert('Upload fehlgeschlagen.');
+      }
+    } catch (e) {
+      console.error('Upload Fehler:', e);
+    } finally {
+      setUploading(false);
+      e.target.value = null; // Reset input
+    }
+  };
 
   const formatTime = (minutes) => {
     if (!minutes || minutes <= 0) return '0m';
@@ -131,6 +178,34 @@ function App() {
               <h2>Lüfter</h2>
               <div className="value">
                 {data.cooling_fan_speed !== undefined ? Math.round((data.cooling_fan_speed / 2.55)) : 0}%
+              </div>
+            </div>
+
+            {/* Dateien & Upload */}
+            <div className="card files-card">
+              <h2>Dateien (SD-Karte)</h2>
+              <div className="file-list">
+                {files.length === 0 ? (
+                  <p className="no-files">Keine GCode-Dateien gefunden.</p>
+                ) : (
+                  files.map((f, i) => (
+                    <div key={i} className="file-item">
+                      📄 {f}
+                    </div>
+                  ))
+                )}
+              </div>
+              <div className="upload-section">
+                <label className="btn btn-upload">
+                  {uploading ? 'Hochladen...' : '➕ Datei hochladen'}
+                  <input 
+                    type="file" 
+                    accept=".gcode.3mf" 
+                    onChange={handleUpload} 
+                    disabled={uploading}
+                    style={{ display: 'none' }}
+                  />
+                </label>
               </div>
             </div>
 

@@ -242,6 +242,50 @@ body {
   background-color: #e74c3c;
 }
 
+.btn-upload {
+  background-color: #3498db;
+  margin-top: 15px;
+  display: inline-flex;
+}
+
+.files-card {
+  grid-column: 1 / -1;
+  text-align: left;
+}
+
+.file-list {
+  max-height: 200px;
+  overflow-y: auto;
+  margin: 10px 0;
+  border: 1px solid #eee;
+  border-radius: 8px;
+  padding: 5px;
+}
+
+.file-item {
+  padding: 8px;
+  border-bottom: 1px solid #f9f9f9;
+  font-size: 0.95rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-item:last-child {
+  border-bottom: none;
+}
+
+.no-files {
+  padding: 10px;
+  color: #888;
+  font-style: italic;
+}
+
+.upload-section {
+  display: flex;
+  justify-content: center;
+}
+
 .btn:active {
   filter: brightness(0.8);
 }
