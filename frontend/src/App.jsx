@@ -68,7 +68,10 @@ function App() {
                 <h2>AMS - Material</h2>
                 <div className="ams-slots">
                   {data.ams.ams[0].tray.map((tray) => (
-                    <div key={tray.id} className="ams-slot">
+                    <div 
+                      key={tray.id} 
+                      className={`ams-slot ${tray.state === 10 || tray.id === data.ams.tray_now ? 'active' : ''}`}
+                    >
                       <div 
                         className="ams-color-dot" 
                         style={{ backgroundColor: tray.tray_color ? `#${tray.tray_color.substring(0, 6)}` : '#ccc' }}
@@ -77,6 +80,9 @@ function App() {
                         <span className="ams-type">{tray.tray_type || 'Leer'}</span>
                         <span className="ams-id">Slot {parseInt(tray.id) + 1}</span>
                       </div>
+                      {(tray.state === 10 || tray.id === data.ams.tray_now) && (
+                        <div className="active-tag">AKTIV</div>
+                      )}
                     </div>
                   ))}
                 </div>

@@ -112,6 +112,24 @@ body {
   background: #fcfcfc;
   border-radius: 8px;
   border: 1px solid #eee;
+  position: relative;
+}
+
+.ams-slot.active {
+  border: 2px solid #28a745;
+  background-color: #f0fff4;
+  box-shadow: 0 0 8px rgba(40, 167, 69, 0.2);
+}
+
+.active-tag {
+  position: absolute;
+  top: -8px;
+  background: #28a745;
+  color: white;
+  font-size: 0.6rem;
+  font-weight: 800;
+  padding: 2px 6px;
+  border-radius: 4px;
 }
 
 .ams-color-dot {
