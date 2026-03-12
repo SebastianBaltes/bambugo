@@ -40,6 +40,10 @@ var (
 	clientsMu   sync.Mutex
 	mqttClient  mqtt.Client
 	seqCounter  uint64
+
+	// Cache für Moonraker Status-Abfragen
+	latestData   map[string]any
+	latestDataMu sync.RWMutex
 )
 
 func main() {
@@ -68,6 +72,11 @@ func main() {
 	http.HandleFunc("/files", filesHandler)
 	http.HandleFunc("/upload", uploadHandler)
 	
+	// Moonraker API Bridge für Orca Slicer
+	http.HandleFunc("/printer/info", moonrakerInfoHandler)
+	http.HandleFunc("/server/files/upload", moonrakerUploadHandler)
+	http.HandleFunc("/printer/objects/query", moonrakerQueryHandler)
+	
 	log.Printf("[HTTP] Backend läuft auf %s\n", port)
 	if err := http.ListenAndServe(port, nil); err != nil {
 		log.Fatal("[HTTP] ListenAndServe:", err)
@@ -76,6 +85,22 @@ func main() {
 
 func messageHandler(client mqtt.Client, msg mqtt.Message) {
 	payload := msg.Payload()
+
+	// Status im Cache speichern für Moonraker Bridge
+	var data map[string]any
+	if err := json.Unmarshal(payload, &data); err == nil {
+		if printObj, ok := data["print"].(map[string]any); ok {
+			latestDataMu.Lock()
+			if latestData == nil {
+				latestData = make(map[string]any)
+			}
+			for k, v := range printObj {
+				latestData[k] = v
+			}
+			latestDataMu.Unlock()
+		}
+	}
+
 	clientsMu.Lock()
 	defer clientsMu.Unlock()
 	for conn := range clients {
@@ -309,4 +334,106 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 
 	log.Println("[FTP] Datei erfolgreich hochgeladen:", header.Filename)
 	w.Write([]byte("Erfolgreich hochgeladen"))
+}
+
+// --- Moonraker API Bridge ---
+
+func moonrakerInfoHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	// Orca prüft, ob der Server antwortet
+	resp := map[string]any{
+		"result": map[string]any{
+			"state": "ready",
+			"hostname": "monsterpi",
+			"software_version": "v0.1-bambugo",
+			"cpu_info": "Raspberry Pi",
+		},
+	}
+	json.NewEncoder(w).Encode(resp)
+}
+
+func moonrakerQueryHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	latestDataMu.RLock()
+	defer latestDataMu.RUnlock()
+
+	// Mappe Bambu Status auf Moonraker Format (sehr vereinfacht)
+	tempNozzle := 0.0
+	if v, ok := latestData["nozzle_temper"].(float64); ok { tempNozzle = v }
+	tempBed := 0.0
+	if v, ok := latestData["bed_temper"].(float64); ok { tempBed = v }
+
+	state := "ready"
+	if s, ok := latestData["gcode_state"].(string); ok {
+		if s == "RUNNING" { state = "printing" }
+	}
+
+	resp := map[string]any{
+		"result": map[string]any{
+			"status": map[string]any{
+				"extruder": map[string]any{"temperature": tempNozzle, "target": 0},
+				"heater_bed": map[string]any{"temperature": tempBed, "target": 0},
+				"print_stats": map[string]any{"state": state},
+			},
+		},
+	}
+	json.NewEncoder(w).Encode(resp)
+}
+
+func moonrakerUploadHandler(w http.ResponseWriter, r *http.Request) {
+	// 1. Datei von Orca entgegennehmen
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		http.Error(w, "Keine Datei", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	log.Printf("[Moonraker] Empfange Upload von Orca: %s\n", header.Filename)
+
+	tempPath := filepath.Join(os.TempDir(), header.Filename)
+	out, err := os.Create(tempPath)
+	if err != nil { return }
+	io.Copy(out, file)
+	out.Close()
+
+	// 2. Per FTPS zum Drucker schieben
+	cmd := exec.Command("curl", "-k", "--user", user+":"+password, "-T", tempPath, ftpsUrl)
+	if err := cmd.Run(); err != nil {
+		log.Println("[Moonraker] FTP Upload Fehler:", err)
+		return
+	}
+	os.Remove(tempPath)
+
+	// 3. Druck starten via MQTT
+	// Wenn es eine .gcode.3mf ist, nutze project_file, sonst gcode_file
+	var mqttPayload map[string]any
+	if strings.HasSuffix(header.Filename, ".3mf") {
+		mqttPayload = map[string]any{
+			"print": map[string]any{
+				"sequence_id":  nextSequenceID(),
+				"command":      "project_file",
+				"param":        "Metadata/slice_1.gcode",
+				"subtask_name": header.Filename,
+				"url":          header.Filename,
+				"timelapse":    true,
+				"bed_leveling": true,
+				"flow_cali":    true,
+			},
+		}
+	} else {
+		mqttPayload = map[string]any{
+			"print": map[string]any{
+				"sequence_id": nextSequenceID(),
+				"command":    "gcode_file",
+				"param":      header.Filename,
+			},
+		}
+	}
+
+	b, _ := json.Marshal(mqttPayload)
+	mqttClient.Publish(cmdTopic, 0, false, b)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"result": "success"})
 }
