@@ -5,6 +5,13 @@ import './App.css';
 function App() {
   const { data, connected, sendCommand } = usePrinter();
 
+  const formatTime = (minutes) => {
+    if (!minutes || minutes <= 0) return '0m';
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  };
+
   return (
     <div className="dashboard-container">
       <header className="header">
@@ -82,11 +89,11 @@ function App() {
             <div className="card status-card">
               <h2>Status</h2>
               <div className="value large">{data.gcode_state || 'IDLE'}</div>
-              <div className="sub-info">
+              <div className="highlight-info">
                 Fortschritt: {data.mc_percent !== undefined ? data.mc_percent : 0}% 
               </div>
-              <div className="sub-info">
-                Restzeit: {data.mc_remaining_time !== undefined ? data.mc_remaining_time : 0} min
+              <div className="highlight-info">
+                Restzeit: {formatTime(data.mc_remaining_time)}
               </div>
             </div>
 
