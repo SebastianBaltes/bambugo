@@ -55,6 +55,30 @@ function App() {
               </div>
             </div>
 
+            {/* AMS Status */}
+            {data.ams && data.ams.ams && data.ams.ams[0] && (
+              <div className="card ams-card">
+                <h2>AMS - Material</h2>
+                <div className="ams-slots">
+                  {data.ams.ams[0].tray.map((tray) => (
+                    <div key={tray.id} className="ams-slot">
+                      <div 
+                        className="ams-color-dot" 
+                        style={{ backgroundColor: tray.tray_color ? `#${tray.tray_color.substring(0, 6)}` : '#ccc' }}
+                      ></div>
+                      <div className="ams-info">
+                        <span className="ams-type">{tray.tray_type || 'Leer'}</span>
+                        <span className="ams-id">Slot {parseInt(tray.id) + 1}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="sub-info ams-stats">
+                  Feuchtigkeit: {data.ams.ams[0].humidity || '?'} | Temp: {data.ams.ams[0].temp || '?'}°C
+                </div>
+              </div>
+            )}
+
             <div className="card status-card">
               <h2>Status</h2>
               <div className="value large">{data.gcode_state || 'IDLE'}</div>

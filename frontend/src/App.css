@@ -92,6 +92,58 @@ body {
   object-fit: cover;
 }
 
+.ams-card {
+  grid-column: 1 / -1;
+}
+
+.ams-slots {
+  display: flex;
+  justify-content: space-around;
+  gap: 10px;
+  margin-bottom: 15px;
+}
+
+.ams-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+  padding: 10px;
+  background: #fcfcfc;
+  border-radius: 8px;
+  border: 1px solid #eee;
+}
+
+.ams-color-dot {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid #ddd;
+  margin-bottom: 8px;
+}
+
+.ams-info {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.9rem;
+}
+
+.ams-type {
+  font-weight: 700;
+  color: #333;
+}
+
+.ams-id {
+  font-size: 0.75rem;
+  color: #888;
+}
+
+.ams-stats {
+  margin-top: 5px;
+  border-top: 1px solid #eee;
+  padding-top: 10px;
+}
+
 .card h2 {
   font-size: 1.1rem;
   color: #666;
