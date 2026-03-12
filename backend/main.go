@@ -6,9 +6,15 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -21,7 +27,8 @@ const (
 	user     = "bblp"
 	password = "b4129081"
 	topic    = "device/+/report"
-	cmdTopic = "device/22E8BJ5C1401719/request" // Dein Drucker
+	cmdTopic = "device/22E8BJ5C1401719/request"
+	ftpsUrl  = "ftps://192.168.178.55:990/"
 	port     = ":8080"
 )
 
@@ -58,6 +65,8 @@ func main() {
 
 	http.HandleFunc("/ws", wsEndpoint)
 	http.HandleFunc("/stream", camHandler)
+	http.HandleFunc("/files", filesHandler)
+	http.HandleFunc("/upload", uploadHandler)
 	
 	log.Printf("[HTTP] Backend läuft auf %s\n", port)
 	if err := http.ListenAndServe(port, nil); err != nil {
@@ -210,4 +219,69 @@ func camHandler(w http.ResponseWriter, r *http.Request) {
 			frame = frame[:0]
 		}
 	}
+}
+
+// filesHandler listet alle .gcode.3mf Dateien auf dem Drucker
+func filesHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	
+	// curl -k --user "bblp:CODE" ftps://IP:990/
+	cmd := exec.Command("curl", "-k", "--user", user+":"+password, ftpsUrl)
+	output, err := cmd.Output()
+	if err != nil {
+		log.Println("[FTP] List Fehler:", err)
+		http.Error(w, "Fehler beim Abrufen der Dateiliste", http.StatusInternalServerError)
+		return
+	}
+
+	var files []string
+	lines := strings.Split(string(output), "\n")
+	// Einfacher Regex für Dateinamen in der FTP-Liste
+	re := regexp.MustCompile(`\d{2}:\d{2}\s+(.*\.gcode\.3mf)$`)
+
+	for _, line := range lines {
+		match := re.FindStringSubmatch(line)
+		if len(match) > 1 {
+			files = append(files, match[1])
+		}
+	}
+
+	json.NewEncoder(w).Encode(files)
+}
+
+// uploadHandler empfängt eine Datei und schiebt sie per FTPS zum Drucker
+func uploadHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	if r.Method != "POST" {
+		return
+	}
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		http.Error(w, "Keine Datei gefunden", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	// Datei temporär zwischenspeichern
+	tempPath := filepath.Join(os.TempDir(), header.Filename)
+	out, err := os.Create(tempPath)
+	if err != nil {
+		http.Error(w, "Fehler beim Erstellen der Temp-Datei", http.StatusInternalServerError)
+		return
+	}
+	defer os.Remove(tempPath)
+	io.Copy(out, file)
+	out.Close()
+
+	// Per curl zum Drucker schieben
+	cmd := exec.Command("curl", "-k", "--user", user+":"+password, "-T", tempPath, ftpsUrl)
+	if err := cmd.Run(); err != nil {
+		log.Println("[FTP] Upload Fehler:", err)
+		http.Error(w, "Upload zum Drucker fehlgeschlagen", http.StatusInternalServerError)
+		return
+	}
+
+	log.Println("[FTP] Datei erfolgreich hochgeladen:", header.Filename)
+	w.Write([]byte("Erfolgreich hochgeladen"))
 }
