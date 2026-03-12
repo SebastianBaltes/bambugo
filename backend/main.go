@@ -153,6 +153,31 @@ func wsEndpoint(w http.ResponseWriter, r *http.Request) {
 		case "print_stop":
 			log.Println("[CMD] Druck STOP")
 			sendPrintCommand("stop")
+		default:
+			// Check for specialized commands like print_file:filename.gcode.3mf
+			if strings.HasPrefix(command, "print_file:") {
+				filename := strings.TrimPrefix(command, "print_file:")
+				log.Printf("[CMD] Starte Druck für Datei: %s\n", filename)
+				
+				payload := map[string]any{
+					"print": map[string]any{
+						"sequence_id":    nextSequenceID(),
+						"command":        "project_file",
+						"param":          "Metadata/slice_1.gcode",
+						"subtask_name":   filename,
+						"url":            filename,
+						"bed_type":       "auto",
+						"timelapse":      true,
+						"bed_leveling":   true,
+						"flow_cali":      true,
+						"vibration_cali": true,
+						"layer_inspect":  true,
+						"ams_mapping":    []int{-1, -1, -1, -1},
+					},
+				}
+				b, _ := json.Marshal(payload)
+				mqttClient.Publish(cmdTopic, 0, false, b)
+			}
 		}
 	}
 }
