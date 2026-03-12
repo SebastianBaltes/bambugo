@@ -168,6 +168,13 @@ body {
   color: #777;
 }
 
+.highlight-info {
+  font-size: 1.6rem;
+  font-weight: 600;
+  color: #111;
+  margin: 5px 0;
+}
+
 .button-group {
   display: flex;
   gap: 10px;
