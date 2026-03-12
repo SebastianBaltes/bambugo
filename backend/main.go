@@ -98,6 +98,17 @@ func sendLightCommand(mode string) {
 	mqttClient.Publish(cmdTopic, 0, false, b)
 }
 
+func sendPrintCommand(cmd string) {
+	payload := map[string]any{
+		"print": map[string]any{
+			"sequence_id": nextSequenceID(),
+			"command":     cmd,
+		},
+	}
+	b, _ := json.Marshal(payload)
+	mqttClient.Publish(cmdTopic, 0, false, b)
+}
+
 func wsEndpoint(w http.ResponseWriter, r *http.Request) {
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -124,6 +135,15 @@ func wsEndpoint(w http.ResponseWriter, r *http.Request) {
 		case "light_off":
 			log.Println("[CMD] Licht AUS")
 			sendLightCommand("off")
+		case "print_pause":
+			log.Println("[CMD] Druck PAUSE")
+			sendPrintCommand("pause")
+		case "print_resume":
+			log.Println("[CMD] Druck RESUME")
+			sendPrintCommand("resume")
+		case "print_stop":
+			log.Println("[CMD] Druck STOP")
+			sendPrintCommand("stop")
 		}
 	}
 }
