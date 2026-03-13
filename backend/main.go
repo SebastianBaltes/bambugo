@@ -22,17 +22,18 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-const (
-	broker   = "ssl://192.168.178.55:8883"
-	user     = "bblp"
-	password = "b4129081"
-	topic    = "device/+/report"
-	cmdTopic = "device/22E8BJ5C1401719/request"
-	ftpsUrl  = "ftps://192.168.178.55:990/"
-	port     = ":8080"
-)
+type Config struct {
+	PrinterIP         string `json:"printer_ip"`
+	PrinterSerial     string `json:"printer_serial"`
+	PrinterAccessCode string `json:"printer_access_code"`
+	BackendPort       string `json:"backend_port"`
+}
 
 var (
+	config      Config
+	configMu    sync.RWMutex
+	configPath  = "config.json"
+	
 	upgrader = websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool { return true },
 	}
@@ -46,31 +47,61 @@ var (
 	latestDataMu sync.RWMutex
 )
 
-func main() {
-	tlsConfig := &tls.Config{InsecureSkipVerify: true}
-	opts := mqtt.NewClientOptions().
-		AddBroker(broker).
-		SetClientID("bambugo-backend").
-		SetUsername(user).
-		SetPassword(password).
-		SetTLSConfig(tlsConfig)
+func loadConfig() error {
+	file, err := os.ReadFile(configPath)
+	if err != nil {
+		return err
+	}
+	configMu.Lock()
+	defer configMu.Unlock()
+	return json.Unmarshal(file, &config)
+}
 
-	opts.OnConnect = func(c mqtt.Client) {
-		log.Println("[MQTT] Verbunden mit Bambu Drucker!")
-		if token := c.Subscribe(topic, 0, messageHandler); token.Wait() && token.Error() != nil {
-			log.Printf("[MQTT] Subscribe Fehler: %v\n", token.Error())
+func saveConfig(c Config) error {
+	data, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(configPath, data, 0644)
+}
+
+func getMQTTBroker() string {
+	configMu.RLock()
+	defer configMu.RUnlock()
+	return fmt.Sprintf("ssl://%s:8883", config.PrinterIP)
+}
+
+func getFTPSUrl() string {
+	configMu.RLock()
+	defer configMu.RUnlock()
+	return fmt.Sprintf("ftps://%s:990/", config.PrinterIP)
+}
+
+func getCmdTopic() string {
+	configMu.RLock()
+	defer configMu.RUnlock()
+	return fmt.Sprintf("device/%s/request", config.PrinterSerial)
+}
+
+func main() {
+	if err := loadConfig(); err != nil {
+		log.Printf("Warnung: Konnte %s nicht laden (nutze Defaults): %v\n", configPath, err)
+		// Fallback Defaults falls Datei fehlt
+		config = Config{
+			PrinterIP: "192.168.178.55",
+			PrinterSerial: "22E8BJ5C1401719",
+			PrinterAccessCode: "b4129081",
+			BackendPort: ":8080",
 		}
 	}
 
-	mqttClient = mqtt.NewClient(opts)
-	if token := mqttClient.Connect(); token.Wait() && token.Error() != nil {
-		log.Fatalf("[MQTT] Verbindungsfehler: %v", token.Error())
-	}
+	initMQTT()
 
 	http.HandleFunc("/ws", wsEndpoint)
 	http.HandleFunc("/stream", camHandler)
 	http.HandleFunc("/files", filesHandler)
 	http.HandleFunc("/upload", uploadHandler)
+	http.HandleFunc("/api/config", configHandler)
 	
 	// Moonraker API Bridge für Orca Slicer
 	http.HandleFunc("/", logRequest(rootHandler))
@@ -79,9 +110,79 @@ func main() {
 	http.HandleFunc("/server/files/upload", logRequest(moonrakerUploadHandler))
 	http.HandleFunc("/printer/objects/query", logRequest(moonrakerQueryHandler))
 	
-	log.Printf("[HTTP] Backend läuft auf %s\n", port)
-	if err := http.ListenAndServe(port, nil); err != nil {
+	log.Printf("[HTTP] Backend läuft auf %s\n", config.BackendPort)
+	if err := http.ListenAndServe(config.BackendPort, nil); err != nil {
 		log.Fatal("[HTTP] ListenAndServe:", err)
+	}
+}
+
+func initMQTT() {
+	if mqttClient != nil && mqttClient.IsConnected() {
+		mqttClient.Disconnect(250)
+	}
+
+	configMu.RLock()
+	c := config
+	configMu.RUnlock()
+
+	tlsConfig := &tls.Config{InsecureSkipVerify: true}
+	opts := mqtt.NewClientOptions().
+		AddBroker(getMQTTBroker()).
+		SetClientID("bambugo-backend").
+		SetUsername("bblp").
+		SetPassword(c.PrinterAccessCode).
+		SetTLSConfig(tlsConfig)
+
+	opts.OnConnect = func(cl mqtt.Client) {
+		log.Println("[MQTT] Verbunden mit Bambu Drucker!")
+		topic := fmt.Sprintf("device/%s/report", c.PrinterSerial)
+		if token := cl.Subscribe(topic, 0, messageHandler); token.Wait() && token.Error() != nil {
+			log.Printf("[MQTT] Subscribe Fehler: %v\n", token.Error())
+		}
+	}
+
+	mqttClient = mqtt.NewClient(opts)
+	if token := mqttClient.Connect(); token.Wait() && token.Error() != nil {
+		log.Printf("[MQTT] Verbindungsfehler: %v (Warte auf Config-Korrektur)\n", token.Error())
+	}
+}
+
+func configHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	if r.Method == "OPTIONS" {
+		return
+	}
+
+	if r.Method == "GET" {
+		configMu.RLock()
+		defer configMu.RUnlock()
+		json.NewEncoder(w).Encode(config)
+		return
+	}
+
+	if r.Method == "POST" {
+		var newConfig Config
+		if err := json.NewDecoder(r.Body).Decode(&newConfig); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := saveConfig(newConfig); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		
+		configMu.Lock()
+		config = newConfig
+		configMu.Unlock()
+
+		log.Println("[CONFIG] Neue Konfiguration gespeichert. Starte MQTT neu...")
+		go initMQTT()
+		
+		w.Write([]byte("Erfolgreich gespeichert"))
+		return
 	}
 }
 
@@ -109,7 +210,6 @@ func octoVersionHandler(w http.ResponseWriter, r *http.Request) {
 func messageHandler(client mqtt.Client, msg mqtt.Message) {
 	payload := msg.Payload()
 
-	// Status im Cache speichern für Moonraker Bridge
 	var data map[string]any
 	if err := json.Unmarshal(payload, &data); err == nil {
 		if printObj, ok := data["print"].(map[string]any); ok {
@@ -152,7 +252,7 @@ func sendLightCommand(mode string) {
 		},
 	}
 	b, _ := json.Marshal(payload)
-	mqttClient.Publish(cmdTopic, 0, false, b)
+	mqttClient.Publish(getCmdTopic(), 0, false, b)
 }
 
 func sendPrintCommand(cmd string) {
@@ -163,7 +263,7 @@ func sendPrintCommand(cmd string) {
 		},
 	}
 	b, _ := json.Marshal(payload)
-	mqttClient.Publish(cmdTopic, 0, false, b)
+	mqttClient.Publish(getCmdTopic(), 0, false, b)
 }
 
 func wsEndpoint(w http.ResponseWriter, r *http.Request) {
@@ -202,7 +302,6 @@ func wsEndpoint(w http.ResponseWriter, r *http.Request) {
 			log.Println("[CMD] Druck STOP")
 			sendPrintCommand("stop")
 		default:
-			// Check for specialized commands like print_file:filename.gcode.3mf
 			if strings.HasPrefix(command, "print_file:") {
 				filename := strings.TrimPrefix(command, "print_file:")
 				log.Printf("[CMD] Starte Druck für Datei: %s\n", filename)
@@ -214,7 +313,6 @@ func wsEndpoint(w http.ResponseWriter, r *http.Request) {
 						"param":          "Metadata/slice_1.gcode",
 						"subtask_name":   filename,
 						"url":            filename,
-						"bed_type":       "auto",
 						"timelapse":      true,
 						"bed_leveling":   true,
 						"flow_cali":      true,
@@ -224,146 +322,101 @@ func wsEndpoint(w http.ResponseWriter, r *http.Request) {
 					},
 				}
 				b, _ := json.Marshal(payload)
-				mqttClient.Publish(cmdTopic, 0, false, b)
+				mqttClient.Publish(getCmdTopic(), 0, false, b)
 			}
 		}
 	}
 }
 
-// camHandler fängt den proprietären Bambu-Stream ab, schneidet die 24-Byte Header weg 
-// und liefert pures MJPEG an den Browser
 func camHandler(w http.ResponseWriter, r *http.Request) {
-	// 1. Dem Drucker per MQTT sagen, dass er die Kamera anwerfen soll
-	// log.Println("[CAM] Sende webcam_start Kommando...")
-	// startCmd := `{"system": {"sequence_id": "1", "command": "webcam_start"}}`
-	// mqttClient.Publish(cmdTopic, 0, false, startCmd)
-
-	// Kurz warten, bis der Drucker den Video-Server gestartet hat
-	// time.Sleep(3 * time.Second)
-
-	// CORS Headers & MJPEG Content Type setzen
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Content-Type", "multipart/x-mixed-replace; boundary=frame")
 
-	// 2. TLS-Verbindung zu Port 6000 aufbauen
-	auth := "Basic " + base64.StdEncoding.EncodeToString([]byte(user+":"+password))
+	configMu.RLock()
+	c := config
+	configMu.RUnlock()
+
+	auth := "Basic " + base64.StdEncoding.EncodeToString([]byte("bblp:"+c.PrinterAccessCode))
 	conf := &tls.Config{InsecureSkipVerify: true}
-	conn, err := tls.Dial("tcp", "192.168.178.55:6000", conf)
+	conn, err := tls.Dial("tcp", c.PrinterIP+":6000", conf)
 	if err != nil {
-		log.Println("[CAM] TLS Fehler:", err)
 		return
 	}
 	defer conn.Close()
 
-	req := fmt.Sprintf("GET /stream HTTP/1.1\r\nHost: 192.168.178.55:6000\r\nAuthorization: %s\r\n\r\n", auth)
+	req := fmt.Sprintf("GET /stream HTTP/1.1\r\nHost: %s:6000\r\nAuthorization: %s\r\n\r\n", c.PrinterIP, auth)
 	conn.Write([]byte(req))
 
-	// 3. Den Stream nach JPEGs absuchen (Start: FF D8, Ende: FF D9)
 	reader := bufio.NewReader(conn)
 	var frame []byte
-
-	log.Println("[CAM] Stream-Proxy läuft!")
 	for {
 		b, err := reader.ReadByte()
-		if err != nil {
-			log.Println("[CAM] Stream abgerissen:", err)
-			break
-		}
+		if err != nil { break }
 		frame = append(frame, b)
-
 		l := len(frame)
 		if l >= 2 && frame[l-2] == 0xFF && frame[l-1] == 0xD8 {
-			// Wir haben den Start eines neuen JPEGs gefunden -> Puffer zurücksetzen, inkl. FF D8
 			frame = []byte{0xFF, 0xD8}
 		} else if l >= 2 && frame[l-2] == 0xFF && frame[l-1] == 0xD9 {
-			// Ende des JPEGs erreicht -> Frame an den Browser pushen!
 			if frame[0] == 0xFF && frame[1] == 0xD8 {
 				w.Write([]byte("--frame\r\nContent-Type: image/jpeg\r\n\r\n"))
 				w.Write(frame)
 				w.Write([]byte("\r\n"))
-				if flusher, ok := w.(http.Flusher); ok {
-					flusher.Flush()
-				}
+				if flusher, ok := w.(http.Flusher); ok { flusher.Flush() }
 			}
 			frame = frame[:0]
 		}
-
-		if len(frame) > 1024*1024 { // Schutz gegen RAM-Überlauf
-			frame = frame[:0]
-		}
+		if len(frame) > 1024*1024 { frame = frame[:0] }
 	}
 }
 
-// filesHandler listet alle .gcode.3mf Dateien auf dem Drucker
 func filesHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	
-	// curl -k --user "bblp:CODE" ftps://IP:990/
-	cmd := exec.Command("curl", "-k", "--user", user+":"+password, ftpsUrl)
+	configMu.RLock()
+	c := config
+	configMu.RUnlock()
+
+	cmd := exec.Command("curl", "-k", "--user", "bblp:"+c.PrinterAccessCode, getFTPSUrl())
 	output, err := cmd.Output()
 	if err != nil {
-		log.Println("[FTP] List Fehler:", err)
 		http.Error(w, "Fehler beim Abrufen der Dateiliste", http.StatusInternalServerError)
 		return
 	}
 
 	var files []string
 	lines := strings.Split(string(output), "\n")
-	// Einfacher Regex für Dateinamen in der FTP-Liste
 	re := regexp.MustCompile(`\d{2}:\d{2}\s+(.*\.gcode\.3mf)$`)
-
 	for _, line := range lines {
 		match := re.FindStringSubmatch(line)
-		if len(match) > 1 {
-			files = append(files, match[1])
-		}
+		if len(match) > 1 { files = append(files, match[1]) }
 	}
-
 	json.NewEncoder(w).Encode(files)
 }
 
-// uploadHandler empfängt eine Datei und schiebt sie per FTPS zum Drucker
 func uploadHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	if r.Method != "POST" {
-		return
-	}
-
+	if r.Method != "POST" { return }
 	file, header, err := r.FormFile("file")
-	if err != nil {
-		http.Error(w, "Keine Datei gefunden", http.StatusBadRequest)
-		return
-	}
+	if err != nil { return }
 	defer file.Close()
 
-	// Datei temporär zwischenspeichern
 	tempPath := filepath.Join(os.TempDir(), header.Filename)
 	out, err := os.Create(tempPath)
-	if err != nil {
-		http.Error(w, "Fehler beim Erstellen der Temp-Datei", http.StatusInternalServerError)
-		return
-	}
+	if err != nil { return }
 	defer os.Remove(tempPath)
 	io.Copy(out, file)
 	out.Close()
 
-	// Per curl zum Drucker schieben
-	cmd := exec.Command("curl", "-k", "--user", user+":"+password, "-T", tempPath, ftpsUrl)
-	if err := cmd.Run(); err != nil {
-		log.Println("[FTP] Upload Fehler:", err)
-		http.Error(w, "Upload zum Drucker fehlgeschlagen", http.StatusInternalServerError)
-		return
-	}
+	configMu.RLock()
+	c := config
+	configMu.RUnlock()
 
-	log.Println("[FTP] Datei erfolgreich hochgeladen:", header.Filename)
+	cmd := exec.Command("curl", "-k", "--user", "bblp:"+c.PrinterAccessCode, "-T", tempPath, getFTPSUrl())
+	if err := cmd.Run(); err != nil { return }
 	w.Write([]byte("Erfolgreich hochgeladen"))
 }
 
-// --- Moonraker API Bridge ---
-
 func moonrakerInfoHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	// Orca prüft, ob der Server antwortet
 	resp := map[string]any{
 		"result": map[string]any{
 			"state": "ready",
@@ -379,18 +432,14 @@ func moonrakerQueryHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	latestDataMu.RLock()
 	defer latestDataMu.RUnlock()
-
-	// Mappe Bambu Status auf Moonraker Format (sehr vereinfacht)
 	tempNozzle := 0.0
 	if v, ok := latestData["nozzle_temper"].(float64); ok { tempNozzle = v }
 	tempBed := 0.0
 	if v, ok := latestData["bed_temper"].(float64); ok { tempBed = v }
-
 	state := "ready"
 	if s, ok := latestData["gcode_state"].(string); ok {
 		if s == "RUNNING" { state = "printing" }
 	}
-
 	resp := map[string]any{
 		"result": map[string]any{
 			"status": map[string]any{
@@ -404,15 +453,9 @@ func moonrakerQueryHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func moonrakerUploadHandler(w http.ResponseWriter, r *http.Request) {
-	// 1. Datei von Orca entgegennehmen
 	file, header, err := r.FormFile("file")
-	if err != nil {
-		http.Error(w, "Keine Datei", http.StatusBadRequest)
-		return
-	}
+	if err != nil { return }
 	defer file.Close()
-
-	log.Printf("[Moonraker] Empfange Upload von Orca: %s\n", header.Filename)
 
 	tempPath := filepath.Join(os.TempDir(), header.Filename)
 	out, err := os.Create(tempPath)
@@ -420,16 +463,14 @@ func moonrakerUploadHandler(w http.ResponseWriter, r *http.Request) {
 	io.Copy(out, file)
 	out.Close()
 
-	// 2. Per FTPS zum Drucker schieben
-	cmd := exec.Command("curl", "-k", "--user", user+":"+password, "-T", tempPath, ftpsUrl)
-	if err := cmd.Run(); err != nil {
-		log.Println("[Moonraker] FTP Upload Fehler:", err)
-		return
-	}
+	configMu.RLock()
+	c := config
+	configMu.RUnlock()
+
+	cmd := exec.Command("curl", "-k", "--user", "bblp:"+c.PrinterAccessCode, "-T", tempPath, getFTPSUrl())
+	if err := cmd.Run(); err != nil { return }
 	os.Remove(tempPath)
 
-	// 3. Druck starten via MQTT
-	// Wenn es eine .gcode.3mf ist, nutze project_file, sonst gcode_file
 	var mqttPayload map[string]any
 	if strings.HasSuffix(header.Filename, ".3mf") {
 		mqttPayload = map[string]any{
@@ -453,10 +494,8 @@ func moonrakerUploadHandler(w http.ResponseWriter, r *http.Request) {
 			},
 		}
 	}
-
 	b, _ := json.Marshal(mqttPayload)
-	mqttClient.Publish(cmdTopic, 0, false, b)
-
+	mqttClient.Publish(getCmdTopic(), 0, false, b)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"result": "success"})
 }
