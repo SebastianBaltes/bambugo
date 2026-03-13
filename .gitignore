@@ -2,3 +2,6 @@
 backend/main
 backend/log.txt
 backend/config.json
+*.log
+bambugo-backend
+backend/bambugo-backend
