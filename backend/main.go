@@ -67,6 +67,7 @@ func main() {
 	http.HandleFunc("/files", filesHandler)
 	http.HandleFunc("/upload", uploadHandler)
 	http.HandleFunc("/api/config", configHandler)
+	http.HandleFunc("/files/delete", filesDeleteHandler)
 	http.HandleFunc("/", logRequest(rootHandler))
 	http.HandleFunc("/api/version", logRequest(octoVersionHandler))
 	http.HandleFunc("/printer/info", logRequest(moonrakerInfoHandler))
@@ -134,6 +135,18 @@ func configHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func filesDeleteHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	filename := r.URL.Query().Get("file")
+	if filename == "" { return }
+	configMu.RLock()
+	c := config
+	configMu.RUnlock()
+	log.Printf("[FTPS] Lösche Datei: %s\n", filename)
+	exec.Command("curl", "-k", "--user", "bblp:"+c.PrinterAccessCode, "-X", "DELE "+filename, "ftps://"+c.PrinterIP+":990/").Run()
+	w.Write([]byte("OK"))
+}
+
 func logRequest(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[HTTP] %s %s\n", r.Method, r.URL.Path)
@@ -183,7 +196,7 @@ func wsEndpoint(w http.ResponseWriter, r *http.Request) {
 			clientsMu.Unlock()
 			break
 		}
-		command := string(msg)
+		command := strings.TrimSpace(string(msg))
 		if command == "light_on" {
 			sendMQTT(map[string]any{"system": map[string]any{"sequence_id": strconv.Itoa(nextSequenceID()), "command": "ledctrl", "led_node": "chamber_light", "led_mode": "on", "led_on_time": 0, "led_off_time": 0, "loop_times": 0, "interval_time": 0}})
 		} else if command == "light_off" {
@@ -195,27 +208,63 @@ func wsEndpoint(w http.ResponseWriter, r *http.Request) {
 		} else if command == "print_stop" {
 			sendMQTT(map[string]any{"print": map[string]any{"sequence_id": nextSequenceID(), "command": "stop"}})
 		} else if strings.HasPrefix(command, "print_file:") {
-			filename := strings.TrimPrefix(command, "print_file:")
-			log.Printf("[CMD] Starte Druck (Deep Project Fix): %s\n", filename)
-			
-			// Wir wissen jetzt: Der Pfad ist /media/usb0/
-			// Aber für .3mf Dateien brauchen wir zwingend project_file
+			rest := strings.TrimPrefix(command, "print_file:")
+			// Format: "filename" oder "filename:slotIndex"
+			parts := strings.SplitN(rest, ":", 2)
+			filename := parts[0]
+			amsSlot := -1
+			if len(parts) == 2 {
+				if idx, err := strconv.Atoi(parts[1]); err == nil {
+					amsSlot = idx
+				}
+			}
+			log.Printf("[CMD] Starte Druck: %s (AMS-Slot: %d)\n", filename, amsSlot)
+
+			param := "Metadata/plate_1.gcode"
+			if strings.HasSuffix(filename, ".gcode") && !strings.HasSuffix(filename, ".gcode.3mf") {
+				param = filename
+			}
+
+			subtaskName := filename
+			subtaskName = strings.TrimSuffix(subtaskName, ".gcode.3mf")
+			subtaskName = strings.TrimSuffix(subtaskName, ".3mf")
+			subtaskName = strings.TrimSuffix(subtaskName, ".gcode")
+
+			useAms := amsSlot >= 0
+			amsMapping := []int{}
+			if useAms {
+				amsMapping = []int{amsSlot}
+			}
+
 			payload := map[string]any{
 				"print": map[string]any{
-					"sequence_id":    nextSequenceID(),
-					"command":        "project_file",
-					"param":          "Metadata/slice_1.gcode",
-					"subtask_name":   filename,
-					"url":            "file:///media/usb0/" + filename,
-					"bed_type":       "auto",
-					"timelapse":      true,
-					"bed_leveling":   true,
-					"flow_cali":      true,
-					"vibration_cali": true,
-					"layer_inspect":  true,
-					"ams_mapping":    []int{-1, -1, -1, -1},
+					"sequence_id":             nextSequenceID(),
+					"command":                 "project_file",
+					"param":                   param,
+					"url":                     "file:///media/usb0/" + filename,
+					"file":                    filename,
+					"md5":                     "",
+					"subtask_name":            subtaskName,
+					"bed_type":                "auto",
+					"timelapse":               true,
+					"bed_leveling":            true,
+					"auto_bed_leveling":       1,
+					"flow_cali":               false,
+					"vibration_cali":          false,
+					"layer_inspect":           false,
+					"use_ams":                 useAms,
+					"ams_mapping":             amsMapping,
+					"profile_id":              "0",
+					"project_id":              "0",
+					"subtask_id":              "0",
+					"task_id":                 "0",
+					"cfg":                     "0",
+					"extrude_cali_flag":       0,
+					"extrude_cali_manual_mode": 0,
+					"nozzle_offset_cali":      2,
 				},
 			}
+			
 			sendMQTT(payload)
 		}
 	}
@@ -270,10 +319,16 @@ func filesHandler(w http.ResponseWriter, r *http.Request) {
 	output, _ := cmd.Output()
 	var files []string
 	lines := strings.Split(string(output), "\n")
-	re := regexp.MustCompile(`\d{2}:\d{2}\s+(.*\.gcode\.3mf)$`)
+	re := regexp.MustCompile(`\d{2}:\d{2}\s+(.*\.gcode(?:\.3mf)?)$`)
 	for _, line := range lines {
+		line = strings.TrimSpace(line)
 		match := re.FindStringSubmatch(line)
-		if len(match) > 1 { files = append(files, match[1]) }
+		if len(match) > 1 {
+			filename := match[1]
+			// Entferne eventuelle \r
+			filename = strings.ReplaceAll(filename, "\r", "")
+			files = append(files, filename)
+		}
 	}
 	json.NewEncoder(w).Encode(files)
 }
@@ -325,8 +380,18 @@ func moonrakerUploadHandler(w http.ResponseWriter, r *http.Request) {
 	c := config
 	configMu.RUnlock()
 	exec.Command("curl", "-k", "--user", "bblp:"+c.PrinterAccessCode, "-T", tempPath, "ftps://"+c.PrinterIP+":990/").Run()
-	os.Remove(tempPath)
-	payload := map[string]any{"print": map[string]any{"sequence_id": nextSequenceID(), "command": "project_file", "param": "Metadata/slice_1.gcode", "url": "file:///media/usb0/" + header.Filename}}
+	// Name für MQTT encoden (Leerzeichen -> %20)
+	encodedName := strings.ReplaceAll(header.Filename, " ", "%20")
+	payload := map[string]any{
+		"print": map[string]any{
+			"sequence_id":  nextSequenceID(),
+			"command":      "project_file",
+			"param":        "Metadata/slice_1.gcode",
+			"url":          "file:///media/usb0/" + encodedName,
+			"subtask_name": header.Filename,
+			"ams_mapping":  []int{-1, -1, -1, -1},
+		},
+	}
 	b, _ := json.Marshal(payload)
 	mqttClient.Publish(fmt.Sprintf("device/%s/request", config.PrinterSerial), 0, false, b)
 	w.Header().Set("Content-Type", "application/json")

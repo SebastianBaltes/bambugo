@@ -63,30 +63,44 @@ function App() {
     }
   };
 
+  const deleteFile = async (filename) => {
+    if (!window.confirm(`Datei "${filename}" wirklich löschen?`)) return;
+    try {
+      await fetch(`${backendUrl}/files/delete?file=${encodeURIComponent(filename)}`);
+      fetchFiles();
+    } catch (e) {
+      console.error('Löschfehler:', e);
+    }
+  };
+
+  const [selectedAmsSlotIndex, setSelectedAmsSlotIndex] = useState(null);
+
+  const handleSlotSelect = (slotIndex) => {
+    setSelectedAmsSlotIndex(slotIndex === selectedAmsSlotIndex ? null : slotIndex);
+  };
+
+  const handlePrintClick = (f) => {
+    if (window.confirm(`Soll der Druck von "${f}" gestartet werden?`)) {
+      const amsData = selectedAmsSlotIndex !== null ? `:${selectedAmsSlotIndex}` : '';
+      sendCommand(`print_file:${f}${amsData}`);
+    }
+  };
+
   const handleUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-
     setUploading(true);
     const formData = new FormData();
     formData.append('file', file);
-
     try {
-      const res = await fetch(`${backendUrl}/upload`, {
-        method: 'POST',
-        body: formData,
-      });
-      if (res.ok) {
-        alert('Upload erfolgreich!');
-        fetchFiles();
-      } else {
-        alert('Upload fehlgeschlagen.');
-      }
+      const res = await fetch(`${backendUrl}/upload`, { method: 'POST', body: formData });
+      if (res.ok) { alert('Upload erfolgreich!'); fetchFiles(); }
+      else alert('Upload fehlgeschlagen.');
     } catch (e) {
       console.error('Upload Fehler:', e);
     } finally {
       setUploading(false);
-      e.target.value = null; // Reset input
+      e.target.value = null;
     }
   };
 
@@ -150,9 +164,8 @@ function App() {
         ) : (
           <div className="grid">
             
-            {/* Kamera-Stream via go2rtc (WebRTC oder MP4) */}
+            {/* 1. Kamera-Stream (Desktop: Links, span 9) */}
             <div className="card camera-card">
-              <h2>Kamera</h2>
               <div className="camera-feed">
                 <video 
                   autoPlay 
@@ -160,14 +173,24 @@ function App() {
                   muted 
                   controls
                   src={`http://${window.location.hostname}:1984/api/stream.mp4?src=bambu_cam`} 
-                  style={{ width: '100%', borderRadius: '8px', minHeight: '200px', backgroundColor: '#000' }}
                 />
               </div>
             </div>
 
-            {/* Steuerung */}
+            {/* 2. Status (Desktop: Sidebar Top) */}
+            <div className="card status-card">
+              <h2>Status</h2>
+              <div className="value large">{data.gcode_state || 'IDLE'}</div>
+              <div className="highlight-info">
+                {data.mc_percent !== undefined ? data.mc_percent : 0}% 
+              </div>
+              <div className="highlight-info">
+                {formatTime(data.mc_remaining_time)}
+              </div>
+            </div>
+
+            {/* 3. Steuerung (Desktop: Sidebar) */}
             <div className="card control-card">
-              <h2>Druckersteuerung</h2>
               <div className="button-group main-controls">
                 {data.gcode_state === 'PAUSE' ? (
                    <button className="btn btn-resume" onClick={() => {
@@ -183,54 +206,14 @@ function App() {
                 }}>⏹️ Stop</button>
               </div>
               <div className="button-group light-controls">
-                <button className="btn btn-on" onClick={() => sendCommand('light_on')}>💡 Licht An</button>
-                <button className="btn btn-off" onClick={() => sendCommand('light_off')}>🌙 Licht Aus</button>
+                <button className="btn btn-on" onClick={() => sendCommand('light_on')}>💡 Licht</button>
+                <button className="btn btn-off" onClick={() => sendCommand('light_off')}>🌙 Aus</button>
               </div>
             </div>
 
-            {/* AMS Status */}
-            {data.ams && data.ams.ams && data.ams.ams[0] && (
-              <div className="card ams-card">
-                <h2>AMS - Material</h2>
-                <div className="ams-slots">
-                  {data.ams.ams[0].tray.map((tray) => (
-                    <div 
-                      key={tray.id} 
-                      className={`ams-slot ${tray.state === 10 || tray.id === data.ams.tray_now ? 'active' : ''}`}
-                    >
-                      <div 
-                        className="ams-color-dot" 
-                        style={{ backgroundColor: tray.tray_color ? `#${tray.tray_color.substring(0, 6)}` : '#ccc' }}
-                      ></div>
-                      <div className="ams-info">
-                        <span className="ams-type">{tray.tray_type || 'Leer'}</span>
-                        <span className="ams-id">Slot {parseInt(tray.id) + 1}</span>
-                      </div>
-                      {(tray.state === 10 || tray.id === data.ams.tray_now) && (
-                        <div className="active-tag">AKTIV</div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-                <div className="sub-info ams-stats">
-                  Feuchtigkeit: {data.ams.ams[0].humidity || '?'} | Temp: {data.ams.ams[0].temp || '?'}°C
-                </div>
-              </div>
-            )}
-
-            <div className="card status-card">
-              <h2>Status</h2>
-              <div className="value large">{data.gcode_state || 'IDLE'}</div>
-              <div className="highlight-info">
-                Fortschritt: {data.mc_percent !== undefined ? data.mc_percent : 0}% 
-              </div>
-              <div className="highlight-info">
-                Restzeit: {formatTime(data.mc_remaining_time)}
-              </div>
-            </div>
-
+            {/* 4. Temperaturen & Lüfter (Desktop: Sidebar) */}
             <div className="card temp-card">
-              <h2>Hotend / Nozzle</h2>
+              <h2>Hotend</h2>
               <div className="value">
                 {data.nozzle_temper !== undefined ? data.nozzle_temper : '--'}°C
               </div>
@@ -256,7 +239,36 @@ function App() {
               </div>
             </div>
 
-            {/* Dateien & Upload */}
+            {/* 5. AMS (Desktop: Unten Breit) */}
+            {data.ams && data.ams.ams && data.ams.ams[0] && (
+              <div className="card ams-card">
+                <h2>AMS - Material</h2>
+                <div className="ams-slots">
+                  {data.ams.ams[0].tray.map((tray) => (
+                    <div
+                      key={tray.id}
+                      className={`ams-slot ${tray.state === 10 || tray.id === data.ams.tray_now ? 'active' : ''} ${parseInt(tray.id) === selectedAmsSlotIndex ? 'selected' : ''}`}
+                      onClick={() => handleSlotSelect(parseInt(tray.id))}
+                      style={{ cursor: 'pointer' }}
+                    >
+                      <div 
+                        className="ams-color-dot" 
+                        style={{ backgroundColor: tray.tray_color ? `#${tray.tray_color.substring(0, 6)}` : '#ccc' }}
+                      ></div>
+                      <div className="ams-info">
+                        <span className="ams-type">{tray.tray_type || 'Leer'}</span>
+                        <span className="ams-id">Slot {parseInt(tray.id) + 1}</span>
+                      </div>
+                      {(tray.state === 10 || tray.id === data.ams.tray_now) && (
+                        <div className="active-tag">AKTIV</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 6. Dateien & Upload (Desktop: Unten Breit) */}
             <div className="card files-card">
               <h2>Dateien (SD-Karte)</h2>
               <div className="file-list">
@@ -266,17 +278,15 @@ function App() {
                   files.map((f, i) => (
                     <div key={i} className="file-item">
                       <span className="file-name">📄 {f}</span>
-                      <button 
-                        className="btn-mini btn-print" 
-                        disabled={!['IDLE', 'FINISH', 'FAILED', 'STANDBY'].includes(data.gcode_state)}
-                        onClick={() => {
-                          if(window.confirm(`Soll der Druck von "${f}" gestartet werden?`)) {
-                            sendCommand(`print_file:${f}`);
-                          }
-                        }}
-                      >
-                        Drucken
-                      </button>
+                      <div className="file-actions">
+                        <button
+                          className="btn-mini btn-print"
+                          onClick={() => handlePrintClick(f)}
+                        >
+                          Drucken
+                        </button>
+                        <button className="btn-mini btn-delete" onClick={() => deleteFile(f)}>🗑️</button>
+                      </div>
                     </div>
                   ))
                 )}
@@ -286,7 +296,7 @@ function App() {
                   {uploading ? 'Hochladen...' : '➕ Datei hochladen'}
                   <input 
                     type="file" 
-                    accept=".gcode.3mf" 
+                    accept=".gcode,.gcode.3mf" 
                     onChange={handleUpload} 
                     disabled={uploading}
                     style={{ display: 'none' }}
