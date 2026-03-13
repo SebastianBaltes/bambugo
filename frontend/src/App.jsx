@@ -6,12 +6,50 @@ function App() {
   const { data, connected, sendCommand } = usePrinter();
   const [files, setFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [config, setConfig] = useState({
+    printer_ip: '',
+    printer_serial: '',
+    printer_access_code: '',
+  });
 
   const backendUrl = `http://${window.location.hostname}:8080`;
 
   useEffect(() => {
     fetchFiles();
+    fetchConfig();
   }, []);
+
+  const fetchConfig = async () => {
+    try {
+      const res = await fetch(`${backendUrl}/api/config`);
+      if (res.ok) {
+        const data = await res.json();
+        setConfig(data);
+      }
+    } catch (e) {
+      console.error('Fehler beim Laden der Config:', e);
+    }
+  };
+
+  const saveConfig = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await fetch(`${backendUrl}/api/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(config),
+      });
+      if (res.ok) {
+        alert('Konfiguration gespeichert! Backend verbindet neu...');
+        setShowSettings(false);
+      } else {
+        alert('Fehler beim Speichern.');
+      }
+    } catch (e) {
+      console.error('Save Config Error:', e);
+    }
+  };
 
   const fetchFiles = async () => {
     try {
@@ -63,14 +101,51 @@ function App() {
     <div className="dashboard-container">
       <header className="header">
         <h1>BambuGo</h1>
-        <div className="status-indicator">
-          <span className={`dot ${connected ? 'online' : 'offline'}`}></span>
-          {connected ? 'Verbunden' : 'Offline'}
+        <div className="header-actions">
+          <button className="btn-icon" onClick={() => setShowSettings(!showSettings)}>⚙️</button>
+          <div className="status-indicator">
+            <span className={`dot ${connected ? 'online' : 'offline'}`}></span>
+            {connected ? 'Verbunden' : 'Offline'}
+          </div>
         </div>
       </header>
 
       <main className="content">
-        {!data ? (
+        {showSettings ? (
+          <div className="card settings-card">
+            <h2>Konfiguration</h2>
+            <form onSubmit={saveConfig}>
+              <div className="form-group">
+                <label>Drucker IP:</label>
+                <input 
+                  type="text" 
+                  value={config.printer_ip} 
+                  onChange={(e) => setConfig({...config, printer_ip: e.target.value})} 
+                />
+              </div>
+              <div className="form-group">
+                <label>Seriennummer:</label>
+                <input 
+                  type="text" 
+                  value={config.printer_serial} 
+                  onChange={(e) => setConfig({...config, printer_serial: e.target.value})} 
+                />
+              </div>
+              <div className="form-group">
+                <label>Access Code:</label>
+                <input 
+                  type="password" 
+                  value={config.printer_access_code} 
+                  onChange={(e) => setConfig({...config, printer_access_code: e.target.value})} 
+                />
+              </div>
+              <div className="button-group">
+                <button type="submit" className="btn btn-on">Speichern</button>
+                <button type="button" className="btn btn-off" onClick={() => setShowSettings(false)}>Abbrechen</button>
+              </div>
+            </form>
+          </div>
+        ) : !data ? (
           <div className="loading">Warte auf Drucker-Daten...</div>
         ) : (
           <div className="grid">
