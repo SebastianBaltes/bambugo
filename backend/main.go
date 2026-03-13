@@ -61,27 +61,13 @@ func saveConfig(c Config) error {
 	return os.WriteFile(configPath, data, 0644)
 }
 
-func getMQTTBroker() string {
-	configMu.RLock()
-	defer configMu.RUnlock()
-	return fmt.Sprintf("ssl://%s:8883", config.PrinterIP)
-}
-
-func getFTPSUrl() string {
-	configMu.RLock()
-	defer configMu.RUnlock()
-	return fmt.Sprintf("ftps://%s:990/", config.PrinterIP)
-}
-
-func getCmdTopic() string {
-	configMu.RLock()
-	defer configMu.RUnlock()
-	return fmt.Sprintf("device/%s/request", config.PrinterSerial)
-}
-
 func main() {
+	// Debug-Log in Datei umleiten
+	logFile, _ := os.OpenFile("debug.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+	log.SetOutput(io.MultiWriter(os.Stdout, logFile))
+
 	if err := loadConfig(); err != nil {
-		log.Printf("Warnung: Konnte %s nicht laden (nutze Defaults): %v\n", configPath, err)
+		log.Printf("Warnung: Konnte %s nicht laden: %v\n", configPath, err)
 		config = Config{
 			PrinterIP: "192.168.178.55",
 			PrinterSerial: "22E8BJ5C1401719",
@@ -119,13 +105,13 @@ func initMQTT() {
 	configMu.RUnlock()
 	tlsConfig := &tls.Config{InsecureSkipVerify: true}
 	opts := mqtt.NewClientOptions().
-		AddBroker(getMQTTBroker()).
+		AddBroker(fmt.Sprintf("ssl://%s:8883", c.PrinterIP)).
 		SetClientID("bambugo-backend").
 		SetUsername("bblp").
 		SetPassword(c.PrinterAccessCode).
 		SetTLSConfig(tlsConfig)
 	opts.OnConnect = func(cl mqtt.Client) {
-		log.Println("[MQTT] Verbunden mit Bambu Drucker!")
+		log.Println("[MQTT] Verbunden!")
 		topic := fmt.Sprintf("device/%s/report", c.PrinterSerial)
 		cl.Subscribe(topic, 0, messageHandler)
 	}
@@ -135,25 +121,19 @@ func initMQTT() {
 
 func configHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-	if r.Method == "OPTIONS" { return }
 	if r.Method == "GET" {
 		configMu.RLock()
 		defer configMu.RUnlock()
 		json.NewEncoder(w).Encode(config)
-		return
-	}
-	if r.Method == "POST" {
+	} else if r.Method == "POST" {
 		var newConfig Config
 		json.NewDecoder(r.Body).Decode(&newConfig)
 		saveConfig(newConfig)
 		configMu.Lock()
 		config = newConfig
 		configMu.Unlock()
-		log.Println("[CONFIG] Neue Konfiguration gespeichert. Starte MQTT neu...")
 		go initMQTT()
-		w.Write([]byte("Erfolgreich gespeichert"))
+		w.Write([]byte("OK"))
 	}
 }
 
@@ -164,14 +144,10 @@ func logRequest(h http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func rootHandler(w http.ResponseWriter, r *http.Request) {
-	w.Write([]byte("BambuGo Backend is running"))
-}
-
+func rootHandler(w http.ResponseWriter, r *http.Request) { w.Write([]byte("BambuGo Backend")) }
 func octoVersionHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	resp := map[string]any{"api": "0.1", "server": "1.3.10", "text": "OctoPrint (BambuGo Bridge)"}
-	json.NewEncoder(w).Encode(resp)
+	json.NewEncoder(w).Encode(map[string]any{"api": "0.1", "server": "1.3.10", "text": "OctoPrint (BambuGo Bridge)"})
 }
 
 func messageHandler(client mqtt.Client, msg mqtt.Message) {
@@ -192,37 +168,7 @@ func messageHandler(client mqtt.Client, msg mqtt.Message) {
 	}
 }
 
-func nextSequenceID() int {
-	return int(atomic.AddUint64(&seqCounter, 1))
-}
-
-func sendLightCommand(mode string) {
-	payload := map[string]any{
-		"system": map[string]any{
-			"sequence_id":  strconv.Itoa(nextSequenceID()),
-			"command":      "ledctrl",
-			"led_node":     "chamber_light",
-			"led_mode":     mode,
-			"led_on_time":  0,
-			"led_off_time": 0,
-			"loop_times":   0,
-			"interval_time": 0,
-		},
-	}
-	b, _ := json.Marshal(payload)
-	mqttClient.Publish(getCmdTopic(), 0, false, b)
-}
-
-func sendPrintCommand(cmd string) {
-	payload := map[string]any{
-		"print": map[string]any{
-			"sequence_id": nextSequenceID(),
-			"command":     cmd,
-		},
-	}
-	b, _ := json.Marshal(payload)
-	mqttClient.Publish(getCmdTopic(), 0, false, b)
-}
+func nextSequenceID() int { return int(atomic.AddUint64(&seqCounter, 1)) }
 
 func wsEndpoint(w http.ResponseWriter, r *http.Request) {
 	ws, _ := upgrader.Upgrade(w, r, nil)
@@ -238,40 +184,40 @@ func wsEndpoint(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		command := string(msg)
-		switch command {
-		case "light_on": sendLightCommand("on")
-		case "light_off": sendLightCommand("off")
-		case "print_pause": sendPrintCommand("pause")
-		case "print_resume": sendPrintCommand("resume")
-		case "print_stop": sendPrintCommand("stop")
-		default:
-			if strings.HasPrefix(command, "print_file:") {
-				filename := strings.TrimPrefix(command, "print_file:")
-				log.Printf("[CMD] Starte Druck für Datei: %s\n", filename)
-				
-				// Wir nutzen den Pfad /media/usb0/, der im Timelapse-Log auftauchte
-				payload := map[string]any{
-					"print": map[string]any{
-						"sequence_id":    nextSequenceID(),
-						"command":        "project_file",
-						"param":          "Metadata/slice_1.gcode",
-						"subtask_name":   filename,
-						"url":            "/media/usb0/" + filename,
-						"bed_type":       "auto",
-						"timelapse":      true,
-						"bed_leveling":   true,
-						"flow_cali":      true,
-						"vibration_cali": true,
-						"layer_inspect":  true,
-						"ams_mapping":    []int{-1, -1, -1, -1},
-					},
-				}
-				b, _ := json.Marshal(payload)
-				log.Printf("[MQTT] Sende Payload: %s\n", string(b))
-				mqttClient.Publish(getCmdTopic(), 0, false, b)
+		if command == "light_on" {
+			sendMQTT(map[string]any{"system": map[string]any{"sequence_id": strconv.Itoa(nextSequenceID()), "command": "ledctrl", "led_node": "chamber_light", "led_mode": "on", "led_on_time": 0, "led_off_time": 0, "loop_times": 0, "interval_time": 0}})
+		} else if command == "light_off" {
+			sendMQTT(map[string]any{"system": map[string]any{"sequence_id": strconv.Itoa(nextSequenceID()), "command": "ledctrl", "led_node": "chamber_light", "led_mode": "off", "led_on_time": 0, "led_off_time": 0, "loop_times": 0, "interval_time": 0}})
+		} else if command == "print_pause" {
+			sendMQTT(map[string]any{"print": map[string]any{"sequence_id": nextSequenceID(), "command": "pause"}})
+		} else if command == "print_resume" {
+			sendMQTT(map[string]any{"print": map[string]any{"sequence_id": nextSequenceID(), "command": "resume"}})
+		} else if command == "print_stop" {
+			sendMQTT(map[string]any{"print": map[string]any{"sequence_id": nextSequenceID(), "command": "stop"}})
+		} else if strings.HasPrefix(command, "print_file:") {
+			filename := strings.TrimPrefix(command, "print_file:")
+			log.Printf("[CMD] Starte Druck: %s\n", filename)
+			
+			// Wir probieren gcode_file - das ist oft kompatibler für lokale Dateien
+			payload := map[string]any{
+				"print": map[string]any{
+					"sequence_id": nextSequenceID(),
+					"command":     "gcode_file",
+					"param":       filename, // Ohne /sdcard/, da FTP root
+				},
 			}
+			sendMQTT(payload)
 		}
 	}
+}
+
+func sendMQTT(payload any) {
+	b, _ := json.Marshal(payload)
+	configMu.RLock()
+	topic := fmt.Sprintf("device/%s/request", config.PrinterSerial)
+	configMu.RUnlock()
+	log.Printf("[MQTT] Sende: %s\n", string(b))
+	mqttClient.Publish(topic, 0, false, b)
 }
 
 func camHandler(w http.ResponseWriter, r *http.Request) {
@@ -314,12 +260,9 @@ func filesHandler(w http.ResponseWriter, r *http.Request) {
 	configMu.RLock()
 	c := config
 	configMu.RUnlock()
-	cmd := exec.Command("curl", "-k", "--user", "bblp:"+c.PrinterAccessCode, getFTPSUrl())
+	cmd := exec.Command("curl", "-k", "--user", "bblp:"+c.PrinterAccessCode, "ftps://"+c.PrinterIP+":990/")
 	output, err := cmd.Output()
-	if err != nil {
-		http.Error(w, "Fehler beim Abrufen der Dateiliste", http.StatusInternalServerError)
-		return
-	}
+	if err != nil { return }
 	var files []string
 	lines := strings.Split(string(output), "\n")
 	re := regexp.MustCompile(`\d{2}:\d{2}\s+(.*\.gcode\.3mf)$`)
@@ -337,23 +280,20 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil { return }
 	defer file.Close()
 	tempPath := filepath.Join(os.TempDir(), header.Filename)
-	out, err := os.Create(tempPath)
-	if err != nil { return }
-	defer os.Remove(tempPath)
+	out, _ := os.Create(tempPath)
 	io.Copy(out, file)
 	out.Close()
 	configMu.RLock()
 	c := config
 	configMu.RUnlock()
-	cmd := exec.Command("curl", "-k", "--user", "bblp:"+c.PrinterAccessCode, "-T", tempPath, getFTPSUrl())
-	if err := cmd.Run(); err != nil { return }
-	w.Write([]byte("Erfolgreich hochgeladen"))
+	exec.Command("curl", "-k", "--user", "bblp:"+c.PrinterAccessCode, "-T", tempPath, "ftps://"+c.PrinterIP+":990/").Run()
+	os.Remove(tempPath)
+	w.Write([]byte("OK"))
 }
 
 func moonrakerInfoHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	resp := map[string]any{"result": map[string]any{"state": "ready", "hostname": "monsterpi", "software_version": "v0.1-bambugo", "cpu_info": "Raspberry Pi"}}
-	json.NewEncoder(w).Encode(resp)
+	json.NewEncoder(w).Encode(map[string]any{"result": map[string]any{"state": "ready", "hostname": "monsterpi", "software_version": "v0.1-bambugo", "cpu_info": "Raspberry Pi"}})
 }
 
 func moonrakerQueryHandler(w http.ResponseWriter, r *http.Request) {
@@ -368,44 +308,25 @@ func moonrakerQueryHandler(w http.ResponseWriter, r *http.Request) {
 	if s, ok := latestData["gcode_state"].(string); ok {
 		if s == "RUNNING" { state = "printing" }
 	}
-	resp := map[string]any{"result": map[string]any{"status": map[string]any{"extruder": map[string]any{"temperature": tempNozzle, "target": 0}, "heater_bed": map[string]any{"temperature": tempBed, "target": 0}, "print_stats": map[string]any{"state": state}}}}
-	json.NewEncoder(w).Encode(resp)
+	json.NewEncoder(w).Encode(map[string]any{"result": map[string]any{"status": map[string]any{"extruder": map[string]any{"temperature": tempNozzle, "target": 0}, "heater_bed": map[string]any{"temperature": tempBed, "target": 0}, "print_stats": map[string]any{"state": state}}}})
 }
 
 func moonrakerUploadHandler(w http.ResponseWriter, r *http.Request) {
-	file, header, err := r.FormFile("file")
-	if err != nil { return }
+	file, header, _ := r.FormFile("file")
 	defer file.Close()
 	tempPath := filepath.Join(os.TempDir(), header.Filename)
-	out, err := os.Create(tempPath)
-	if err != nil { return }
+	out, _ := os.Create(tempPath)
 	io.Copy(out, file)
 	out.Close()
 	configMu.RLock()
 	c := config
 	configMu.RUnlock()
-	cmd := exec.Command("curl", "-k", "--user", "bblp:"+c.PrinterAccessCode, "-T", tempPath, getFTPSUrl())
-	if err := cmd.Run(); err != nil { return }
+	exec.Command("curl", "-k", "--user", "bblp:"+c.PrinterAccessCode, "-T", tempPath, "ftps://"+c.PrinterIP+":990/").Run()
 	os.Remove(tempPath)
-	var mqttPayload map[string]any
-	if strings.HasSuffix(header.Filename, ".3mf") {
-		mqttPayload = map[string]any{
-			"print": map[string]any{
-				"sequence_id":  nextSequenceID(),
-				"command":      "project_file",
-				"param":        "Metadata/slice_1.gcode",
-				"subtask_name": header.Filename,
-				"url":          "/media/usb0/" + header.Filename,
-				"timelapse":    true,
-				"bed_leveling": true,
-				"flow_cali":    true,
-			},
-		}
-	} else {
-		mqttPayload = map[string]any{"print": map[string]any{"sequence_id": nextSequenceID(), "command": "gcode_file", "param": "/media/usb0/" + header.Filename}}
-	}
-	b, _ := json.Marshal(mqttPayload)
-	mqttClient.Publish(getCmdTopic(), 0, false, b)
+	payload := map[string]any{"print": map[string]any{"sequence_id": nextSequenceID(), "command": "gcode_file", "param": header.Filename}}
+	b, _ := json.Marshal(payload)
+	topic := fmt.Sprintf("device/%s/request", c.PrinterSerial)
+	mqttClient.Publish(topic, 0, false, b)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"result": "success"})
 }
