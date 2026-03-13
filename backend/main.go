@@ -51,10 +51,7 @@ func main() {
 	logFile, _ := os.OpenFile(debugLog, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 	log.SetOutput(io.MultiWriter(os.Stdout, logFile))
 
-	log.Println("[BOOT] BambuGo P2S Backend startet...")
-
 	if err := loadConfig(); err != nil {
-		log.Printf("[BOOT] Warnung: Konnte %s nicht laden: %v\n", configPath, err)
 		config = Config{
 			PrinterIP: "192.168.178.55",
 			PrinterSerial: "22E8BJ5C1401719",
@@ -97,7 +94,7 @@ func initMQTT() {
 		SetPassword(c.PrinterAccessCode).
 		SetTLSConfig(tlsConfig)
 	opts.OnConnect = func(cl mqtt.Client) {
-		log.Println("[MQTT] Verbunden mit P2S!")
+		log.Println("[MQTT] Verbunden!")
 		topic := fmt.Sprintf("device/%s/report", c.PrinterSerial)
 		cl.Subscribe(topic, 0, messageHandler)
 	}
@@ -175,22 +172,18 @@ func nextSequenceID() int { return int(atomic.AddUint64(&seqCounter, 1)) }
 
 func wsEndpoint(w http.ResponseWriter, r *http.Request) {
 	ws, _ := upgrader.Upgrade(w, r, nil)
-	log.Println("[WS] Neuer Client verbunden")
 	clientsMu.Lock()
 	clients[ws] = true
 	clientsMu.Unlock()
 	for {
 		_, msg, err := ws.ReadMessage()
 		if err != nil {
-			log.Println("[WS] Client getrennt")
 			clientsMu.Lock()
 			delete(clients, ws)
 			clientsMu.Unlock()
 			break
 		}
 		command := string(msg)
-		log.Printf("[WS-CMD] Empfangen: %s\n", command)
-		
 		if command == "light_on" {
 			sendMQTT(map[string]any{"system": map[string]any{"sequence_id": strconv.Itoa(nextSequenceID()), "command": "ledctrl", "led_node": "chamber_light", "led_mode": "on", "led_on_time": 0, "led_off_time": 0, "loop_times": 0, "interval_time": 0}})
 		} else if command == "light_off" {
@@ -203,14 +196,17 @@ func wsEndpoint(w http.ResponseWriter, r *http.Request) {
 			sendMQTT(map[string]any{"print": map[string]any{"sequence_id": nextSequenceID(), "command": "stop"}})
 		} else if strings.HasPrefix(command, "print_file:") {
 			filename := strings.TrimPrefix(command, "print_file:")
-			log.Printf("[CMD] Starte Shotgun P2S: %s\n", filename)
+			log.Printf("[CMD] Starte Druck (P2S Fix): %s\n", filename)
 			
-			// Shotgun P2S Edition: Wir probieren ALLES
-			sendMQTT(map[string]any{"print": map[string]any{"sequence_id": 3001, "command": "project_file", "param": "Metadata/slice_1.gcode", "url": filename}})
-			sendMQTT(map[string]any{"print": map[string]any{"sequence_id": 3002, "command": "project_file", "param": "Metadata/slice_1.gcode", "url": "/sdcard/" + filename}})
-			sendMQTT(map[string]any{"print": map[string]any{"sequence_id": 3003, "command": "project_file", "param": "Metadata/slice_1.gcode", "url": "file:///sdcard/" + filename}})
-			sendMQTT(map[string]any{"print": map[string]any{"sequence_id": 3004, "command": "gcode_file", "param": filename}})
-			sendMQTT(map[string]any{"print": map[string]any{"sequence_id": 3005, "command": "gcode_file", "param": "/sdcard/" + filename}})
+			// Der P2S nutzt /media/usb0/ als internen Pfad für den USB-Stick
+			payload := map[string]any{
+				"print": map[string]any{
+					"sequence_id": nextSequenceID(),
+					"command":     "gcode_file",
+					"param":       "/media/usb0/" + filename,
+				},
+			}
+			sendMQTT(payload)
 		}
 	}
 }
@@ -274,6 +270,7 @@ func filesHandler(w http.ResponseWriter, r *http.Request) {
 
 func uploadHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
+	if r.Method != "POST" { return }
 	file, header, _ := r.FormFile("file")
 	defer file.Close()
 	tempPath := filepath.Join(os.TempDir(), header.Filename)
@@ -319,7 +316,10 @@ func moonrakerUploadHandler(w http.ResponseWriter, r *http.Request) {
 	configMu.RUnlock()
 	exec.Command("curl", "-k", "--user", "bblp:"+c.PrinterAccessCode, "-T", tempPath, "ftps://"+c.PrinterIP+":990/").Run()
 	os.Remove(tempPath)
-	payload := map[string]any{"print": map[string]any{"sequence_id": nextSequenceID(), "command": "gcode_file", "param": header.Filename}}
+	
+	// Moonraker Upload nutzt jetzt auch den P2S Fix
+	payload := map[string]any{"print": map[string]any{"sequence_id": nextSequenceID(), "command": "gcode_file", "param": "/media/usb0/" + header.Filename}}
+	
 	b, _ := json.Marshal(payload)
 	mqttClient.Publish(fmt.Sprintf("device/%s/request", config.PrinterSerial), 0, false, b)
 	w.Header().Set("Content-Type", "application/json")
