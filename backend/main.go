@@ -141,7 +141,7 @@ func logRequest(h http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func rootHandler(w http.ResponseWriter, r *http.Request) { w.Write([]byte("BambuGo P2S Backend")) }
+func rootHandler(w http.ResponseWriter, r *http.Request) { w.Write([]byte("BambuGo Backend")) }
 func octoVersionHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"api": "0.1", "server": "1.3.10", "text": "OctoPrint (BambuGo Bridge)"})
@@ -196,14 +196,24 @@ func wsEndpoint(w http.ResponseWriter, r *http.Request) {
 			sendMQTT(map[string]any{"print": map[string]any{"sequence_id": nextSequenceID(), "command": "stop"}})
 		} else if strings.HasPrefix(command, "print_file:") {
 			filename := strings.TrimPrefix(command, "print_file:")
-			log.Printf("[CMD] Starte Druck (P2S Fix): %s\n", filename)
+			log.Printf("[CMD] Starte Druck (Deep Project Fix): %s\n", filename)
 			
-			// Der P2S nutzt /media/usb0/ als internen Pfad für den USB-Stick
+			// Wir wissen jetzt: Der Pfad ist /media/usb0/
+			// Aber für .3mf Dateien brauchen wir zwingend project_file
 			payload := map[string]any{
 				"print": map[string]any{
-					"sequence_id": nextSequenceID(),
-					"command":     "gcode_file",
-					"param":       "/media/usb0/" + filename,
+					"sequence_id":    nextSequenceID(),
+					"command":        "project_file",
+					"param":          "Metadata/slice_1.gcode",
+					"subtask_name":   filename,
+					"url":            "file:///media/usb0/" + filename,
+					"bed_type":       "auto",
+					"timelapse":      true,
+					"bed_leveling":   true,
+					"flow_cali":      true,
+					"vibration_cali": true,
+					"layer_inspect":  true,
+					"ams_mapping":    []int{-1, -1, -1, -1},
 				},
 			}
 			sendMQTT(payload)
@@ -316,10 +326,7 @@ func moonrakerUploadHandler(w http.ResponseWriter, r *http.Request) {
 	configMu.RUnlock()
 	exec.Command("curl", "-k", "--user", "bblp:"+c.PrinterAccessCode, "-T", tempPath, "ftps://"+c.PrinterIP+":990/").Run()
 	os.Remove(tempPath)
-	
-	// Moonraker Upload nutzt jetzt auch den P2S Fix
-	payload := map[string]any{"print": map[string]any{"sequence_id": nextSequenceID(), "command": "gcode_file", "param": "/media/usb0/" + header.Filename}}
-	
+	payload := map[string]any{"print": map[string]any{"sequence_id": nextSequenceID(), "command": "project_file", "param": "Metadata/slice_1.gcode", "url": "file:///media/usb0/" + header.Filename}}
 	b, _ := json.Marshal(payload)
 	mqttClient.Publish(fmt.Sprintf("device/%s/request", config.PrinterSerial), 0, false, b)
 	w.Header().Set("Content-Type", "application/json")
