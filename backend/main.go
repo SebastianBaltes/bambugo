@@ -47,27 +47,11 @@ var (
 	latestDataMu sync.RWMutex
 )
 
-func loadConfig() error {
-	file, err := os.ReadFile(configPath)
-	if err != nil { return err }
-	configMu.Lock()
-	defer configMu.Unlock()
-	return json.Unmarshal(file, &config)
-}
-
-func saveConfig(c Config) error {
-	data, err := json.MarshalIndent(c, "", "  ")
-	if err != nil { return err }
-	return os.WriteFile(configPath, data, 0644)
-}
-
 func main() {
-	// Debug-Log in Datei umleiten
 	logFile, _ := os.OpenFile("debug.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 	log.SetOutput(io.MultiWriter(os.Stdout, logFile))
 
 	if err := loadConfig(); err != nil {
-		log.Printf("Warnung: Konnte %s nicht laden: %v\n", configPath, err)
 		config = Config{
 			PrinterIP: "192.168.178.55",
 			PrinterSerial: "22E8BJ5C1401719",
@@ -119,6 +103,20 @@ func initMQTT() {
 	mqttClient.Connect()
 }
 
+func loadConfig() error {
+	file, err := os.ReadFile(configPath)
+	if err != nil { return err }
+	configMu.Lock()
+	defer configMu.Unlock()
+	return json.Unmarshal(file, &config)
+}
+
+func saveConfig(c Config) error {
+	data, err := json.MarshalIndent(c, "", "  ")
+	if err != nil { return err }
+	return os.WriteFile(configPath, data, 0644)
+}
+
 func configHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	if r.Method == "GET" {
@@ -152,6 +150,12 @@ func octoVersionHandler(w http.ResponseWriter, r *http.Request) {
 
 func messageHandler(client mqtt.Client, msg mqtt.Message) {
 	payload := msg.Payload()
+	
+	// Logging der Drucker-Antwort
+	if strings.Contains(string(payload), "result") || strings.Contains(string(payload), "fail") {
+		log.Printf("[MQTT-IN] %s\n", string(payload))
+	}
+
 	var data map[string]any
 	if err := json.Unmarshal(payload, &data); err == nil {
 		if printObj, ok := data["print"].(map[string]any); ok {
@@ -196,17 +200,13 @@ func wsEndpoint(w http.ResponseWriter, r *http.Request) {
 			sendMQTT(map[string]any{"print": map[string]any{"sequence_id": nextSequenceID(), "command": "stop"}})
 		} else if strings.HasPrefix(command, "print_file:") {
 			filename := strings.TrimPrefix(command, "print_file:")
-			log.Printf("[CMD] Starte Shotgun-Diagnose für: %s\n", filename)
+			log.Printf("[CMD] Starte Shotgun 2: %s\n", filename)
 			
-			// Wir feuern 4 verschiedene Varianten ab. Eine davon MUSS klappen.
-			// Variante 1: Standard SD
-			sendMQTT(map[string]any{"print": map[string]any{"sequence_id": 1001, "command": "project_file", "param": "Metadata/slice_1.gcode", "url": "file:///sdcard/" + filename}})
-			// Variante 2: Standard USB
-			sendMQTT(map[string]any{"print": map[string]any{"sequence_id": 1002, "command": "project_file", "param": "Metadata/slice_1.gcode", "url": "file:///usb/" + filename}})
-			// Variante 3: GCode-Style SD
-			sendMQTT(map[string]any{"print": map[string]any{"sequence_id": 1003, "command": "gcode_file", "param": "/sdcard/" + filename}})
-			// Variante 4: GCode-Style USB
-			sendMQTT(map[string]any{"print": map[string]any{"sequence_id": 1004, "command": "gcode_file", "param": "/usb/" + filename}})
+			// Shotgun Runde 2: Noch mehr Varianten
+			sendMQTT(map[string]any{"print": map[string]any{"sequence_id": 2001, "command": "project_file", "param": "Metadata/slice_1.gcode", "url": filename}}) // Nur Name
+			sendMQTT(map[string]any{"print": map[string]any{"sequence_id": 2002, "command": "project_file", "param": "Metadata/slice_1.gcode", "url": "/sdcard/" + filename}}) // /sdcard/ Pfad
+			sendMQTT(map[string]any{"print": map[string]any{"sequence_id": 2003, "command": "gcode_file", "param": filename}}) // gcode_file nur Name
+			sendMQTT(map[string]any{"print": map[string]any{"sequence_id": 2004, "command": "gcode_file", "param": "/sdcard/" + filename}}) // gcode_file /sdcard/
 		}
 	}
 }
@@ -216,7 +216,7 @@ func sendMQTT(payload any) {
 	configMu.RLock()
 	topic := fmt.Sprintf("device/%s/request", config.PrinterSerial)
 	configMu.RUnlock()
-	log.Printf("[MQTT] Sende: %s\n", string(b))
+	log.Printf("[MQTT-OUT] Sende: %s\n", string(b))
 	mqttClient.Publish(topic, 0, false, b)
 }
 
@@ -226,13 +226,10 @@ func camHandler(w http.ResponseWriter, r *http.Request) {
 	configMu.RLock()
 	c := config
 	configMu.RUnlock()
-	auth := "Basic " + base64.StdEncoding.EncodeToString([]byte("bblp:"+c.PrinterAccessCode))
-	conf := &tls.Config{InsecureSkipVerify: true}
-	conn, err := tls.Dial("tcp", c.PrinterIP+":6000", conf)
-	if err != nil { return }
+	auth := base64.StdEncoding.EncodeToString([]byte("bblp:"+c.PrinterAccessCode))
+	conn, _ := tls.Dial("tcp", c.PrinterIP+":6000", &tls.Config{InsecureSkipVerify: true})
 	defer conn.Close()
-	req := fmt.Sprintf("GET /stream HTTP/1.1\r\nHost: %s:6000\r\nAuthorization: %s\r\n\r\n", c.PrinterIP, auth)
-	conn.Write([]byte(req))
+	fmt.Fprintf(conn, "GET /stream HTTP/1.1\r\nHost: %s:6000\r\nAuthorization: Basic %s\r\n\r\n", c.PrinterIP, auth)
 	reader := bufio.NewReader(conn)
 	var frame []byte
 	for {
@@ -240,9 +237,8 @@ func camHandler(w http.ResponseWriter, r *http.Request) {
 		if err != nil { break }
 		frame = append(frame, b)
 		l := len(frame)
-		if l >= 2 && frame[l-2] == 0xFF && frame[l-1] == 0xD8 {
-			frame = []byte{0xFF, 0xD8}
-		} else if l >= 2 && frame[l-2] == 0xFF && frame[l-1] == 0xD9 {
+		if l >= 2 && frame[l-2] == 0xFF && frame[l-1] == 0xD8 { frame = []byte{0xFF, 0xD8} }
+		if l >= 2 && frame[l-2] == 0xFF && frame[l-1] == 0xD9 {
 			if frame[0] == 0xFF && frame[1] == 0xD8 {
 				w.Write([]byte("--frame\r\nContent-Type: image/jpeg\r\n\r\n"))
 				w.Write(frame)
@@ -261,8 +257,7 @@ func filesHandler(w http.ResponseWriter, r *http.Request) {
 	c := config
 	configMu.RUnlock()
 	cmd := exec.Command("curl", "-k", "--user", "bblp:"+c.PrinterAccessCode, "ftps://"+c.PrinterIP+":990/")
-	output, err := cmd.Output()
-	if err != nil { return }
+	output, _ := cmd.Output()
 	var files []string
 	lines := strings.Split(string(output), "\n")
 	re := regexp.MustCompile(`\d{2}:\d{2}\s+(.*\.gcode\.3mf)$`)
@@ -275,9 +270,7 @@ func filesHandler(w http.ResponseWriter, r *http.Request) {
 
 func uploadHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	if r.Method != "POST" { return }
-	file, header, err := r.FormFile("file")
-	if err != nil { return }
+	file, header, _ := r.FormFile("file")
 	defer file.Close()
 	tempPath := filepath.Join(os.TempDir(), header.Filename)
 	out, _ := os.Create(tempPath)
@@ -300,9 +293,8 @@ func moonrakerQueryHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	latestDataMu.RLock()
 	defer latestDataMu.RUnlock()
-	tempNozzle := 0.0
+	tempNozzle, tempBed := 0.0, 0.0
 	if v, ok := latestData["nozzle_temper"].(float64); ok { tempNozzle = v }
-	tempBed := 0.0
 	if v, ok := latestData["bed_temper"].(float64); ok { tempBed = v }
 	state := "ready"
 	if s, ok := latestData["gcode_state"].(string); ok {
@@ -325,8 +317,7 @@ func moonrakerUploadHandler(w http.ResponseWriter, r *http.Request) {
 	os.Remove(tempPath)
 	payload := map[string]any{"print": map[string]any{"sequence_id": nextSequenceID(), "command": "gcode_file", "param": header.Filename}}
 	b, _ := json.Marshal(payload)
-	topic := fmt.Sprintf("device/%s/request", c.PrinterSerial)
-	mqttClient.Publish(topic, 0, false, b)
+	mqttClient.Publish(fmt.Sprintf("device/%s/request", c.PrinterSerial), 0, false, b)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"result": "success"})
 }

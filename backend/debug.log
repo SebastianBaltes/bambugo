@@ -10,3 +10,10 @@
 2026/03/13 07:39:39 [MQTT] Verbunden!
 2026/03/13 07:40:01 [CMD] Starte Druck (Variante 3): part2.gcode.3mf
 2026/03/13 07:40:01 [MQTT] Sende: {"print":{"ams_mapping":[-1,-1,-1,-1],"bed_leveling":true,"bed_type":"auto","command":"project_file","flow_cali":true,"layer_inspect":true,"param":"Metadata/slice_1.gcode","sequence_id":"1","subtask_name":"part2.gcode.3mf","timelapse":true,"url":"part2.gcode.3mf","vibration_cali":true}}
+2026/03/13 07:40:06 [HTTP] Backend läuft auf :8080
+2026/03/13 07:40:06 [MQTT] Verbunden!
+2026/03/13 07:40:39 [CMD] Starte Shotgun-Diagnose für: part2.gcode.3mf
+2026/03/13 07:40:39 [MQTT] Sende: {"print":{"command":"project_file","param":"Metadata/slice_1.gcode","sequence_id":1001,"url":"file:///sdcard/part2.gcode.3mf"}}
+2026/03/13 07:40:39 [MQTT] Sende: {"print":{"command":"project_file","param":"Metadata/slice_1.gcode","sequence_id":1002,"url":"file:///usb/part2.gcode.3mf"}}
+2026/03/13 07:40:39 [MQTT] Sende: {"print":{"command":"gcode_file","param":"/sdcard/part2.gcode.3mf","sequence_id":1003}}
+2026/03/13 07:40:39 [MQTT] Sende: {"print":{"command":"gcode_file","param":"/usb/part2.gcode.3mf","sequence_id":1004}}
