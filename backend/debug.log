@@ -1,2 +1,8 @@
 2026/03/13 07:37:28 [HTTP] Backend läuft auf :8080
 2026/03/13 07:37:28 [MQTT] Verbunden!
+2026/03/13 07:37:47 [CMD] Starte Druck: Part Studio 1 - Part 2_PETG_2h36m.gcode.3mf
+2026/03/13 07:37:47 [MQTT] Sende: {"print":{"command":"gcode_file","param":"Part Studio 1 - Part 2_PETG_2h36m.gcode.3mf","sequence_id":1}}
+2026/03/13 07:38:17 [CMD] Starte Druck: part2.gcode.3mf
+2026/03/13 07:38:17 [MQTT] Sende: {"print":{"command":"gcode_file","param":"part2.gcode.3mf","sequence_id":2}}
+2026/03/13 07:38:41 [CMD] Starte Druck: Part Studio 1 - Part 2_PETG_2h36m.gcode.3mf
+2026/03/13 07:38:41 [MQTT] Sende: {"print":{"command":"gcode_file","param":"Part Studio 1 - Part 2_PETG_2h36m.gcode.3mf","sequence_id":3}}

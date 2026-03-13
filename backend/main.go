@@ -196,14 +196,23 @@ func wsEndpoint(w http.ResponseWriter, r *http.Request) {
 			sendMQTT(map[string]any{"print": map[string]any{"sequence_id": nextSequenceID(), "command": "stop"}})
 		} else if strings.HasPrefix(command, "print_file:") {
 			filename := strings.TrimPrefix(command, "print_file:")
-			log.Printf("[CMD] Starte Druck: %s\n", filename)
+			log.Printf("[CMD] Starte Druck (Variante 3): %s\n", filename)
 			
-			// Wir probieren gcode_file - das ist oft kompatibler für lokale Dateien
+			// Variante 3: project_file mit relativem Pfad und STRING sequence_id
 			payload := map[string]any{
 				"print": map[string]any{
-					"sequence_id": nextSequenceID(),
-					"command":     "gcode_file",
-					"param":       filename, // Ohne /sdcard/, da FTP root
+					"sequence_id":    strconv.Itoa(nextSequenceID()),
+					"command":        "project_file",
+					"param":          "Metadata/slice_1.gcode",
+					"subtask_name":   filename,
+					"url":            filename, // Relativ zum Root
+					"bed_type":       "auto",
+					"timelapse":      true,
+					"bed_leveling":   true,
+					"flow_cali":      true,
+					"vibration_cali": true,
+					"layer_inspect":  true,
+					"ams_mapping":    []int{-1, -1, -1, -1},
 				},
 			}
 			sendMQTT(payload)
