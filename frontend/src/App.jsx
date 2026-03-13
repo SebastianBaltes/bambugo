@@ -268,7 +268,7 @@ function App() {
                       <span className="file-name">📄 {f}</span>
                       <button 
                         className="btn-mini btn-print" 
-                        disabled={data.gcode_state !== 'IDLE'}
+                        disabled={!['IDLE', 'FINISH', 'FAILED', 'STANDBY'].includes(data.gcode_state)}
                         onClick={() => {
                           if(window.confirm(`Soll der Druck von "${f}" gestartet werden?`)) {
                             sendCommand(`print_file:${f}`);
