@@ -32,7 +32,8 @@ type Config struct {
 var (
 	config      Config
 	configMu    sync.RWMutex
-	configPath  = "config.json"
+	configPath  = "/home/sorokan/.openclaw/workspace/bambugo/backend/config.json"
+	debugLog    = "/home/sorokan/.openclaw/workspace/bambugo/backend/debug.log"
 	
 	upgrader = websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool { return true },
@@ -42,16 +43,18 @@ var (
 	mqttClient  mqtt.Client
 	seqCounter  uint64
 
-	// Cache für Moonraker Status-Abfragen
 	latestData   map[string]any
 	latestDataMu sync.RWMutex
 )
 
 func main() {
-	logFile, _ := os.OpenFile("debug.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+	logFile, _ := os.OpenFile(debugLog, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 	log.SetOutput(io.MultiWriter(os.Stdout, logFile))
 
+	log.Println("[BOOT] BambuGo P2S Backend startet...")
+
 	if err := loadConfig(); err != nil {
+		log.Printf("[BOOT] Warnung: Konnte %s nicht laden: %v\n", configPath, err)
 		config = Config{
 			PrinterIP: "192.168.178.55",
 			PrinterSerial: "22E8BJ5C1401719",
@@ -67,7 +70,6 @@ func main() {
 	http.HandleFunc("/files", filesHandler)
 	http.HandleFunc("/upload", uploadHandler)
 	http.HandleFunc("/api/config", configHandler)
-	
 	http.HandleFunc("/", logRequest(rootHandler))
 	http.HandleFunc("/api/version", logRequest(octoVersionHandler))
 	http.HandleFunc("/printer/info", logRequest(moonrakerInfoHandler))
@@ -95,7 +97,7 @@ func initMQTT() {
 		SetPassword(c.PrinterAccessCode).
 		SetTLSConfig(tlsConfig)
 	opts.OnConnect = func(cl mqtt.Client) {
-		log.Println("[MQTT] Verbunden!")
+		log.Println("[MQTT] Verbunden mit P2S!")
 		topic := fmt.Sprintf("device/%s/report", c.PrinterSerial)
 		cl.Subscribe(topic, 0, messageHandler)
 	}
@@ -142,7 +144,7 @@ func logRequest(h http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func rootHandler(w http.ResponseWriter, r *http.Request) { w.Write([]byte("BambuGo Backend")) }
+func rootHandler(w http.ResponseWriter, r *http.Request) { w.Write([]byte("BambuGo P2S Backend")) }
 func octoVersionHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"api": "0.1", "server": "1.3.10", "text": "OctoPrint (BambuGo Bridge)"})
@@ -150,12 +152,9 @@ func octoVersionHandler(w http.ResponseWriter, r *http.Request) {
 
 func messageHandler(client mqtt.Client, msg mqtt.Message) {
 	payload := msg.Payload()
-	
-	// Logging der Drucker-Antwort
-	if strings.Contains(string(payload), "result") || strings.Contains(string(payload), "fail") {
+	if strings.Contains(string(payload), "result") || strings.Contains(string(payload), "fail") || strings.Contains(string(payload), "command") {
 		log.Printf("[MQTT-IN] %s\n", string(payload))
 	}
-
 	var data map[string]any
 	if err := json.Unmarshal(payload, &data); err == nil {
 		if printObj, ok := data["print"].(map[string]any); ok {
@@ -176,18 +175,22 @@ func nextSequenceID() int { return int(atomic.AddUint64(&seqCounter, 1)) }
 
 func wsEndpoint(w http.ResponseWriter, r *http.Request) {
 	ws, _ := upgrader.Upgrade(w, r, nil)
+	log.Println("[WS] Neuer Client verbunden")
 	clientsMu.Lock()
 	clients[ws] = true
 	clientsMu.Unlock()
 	for {
 		_, msg, err := ws.ReadMessage()
 		if err != nil {
+			log.Println("[WS] Client getrennt")
 			clientsMu.Lock()
 			delete(clients, ws)
 			clientsMu.Unlock()
 			break
 		}
 		command := string(msg)
+		log.Printf("[WS-CMD] Empfangen: %s\n", command)
+		
 		if command == "light_on" {
 			sendMQTT(map[string]any{"system": map[string]any{"sequence_id": strconv.Itoa(nextSequenceID()), "command": "ledctrl", "led_node": "chamber_light", "led_mode": "on", "led_on_time": 0, "led_off_time": 0, "loop_times": 0, "interval_time": 0}})
 		} else if command == "light_off" {
@@ -200,13 +203,14 @@ func wsEndpoint(w http.ResponseWriter, r *http.Request) {
 			sendMQTT(map[string]any{"print": map[string]any{"sequence_id": nextSequenceID(), "command": "stop"}})
 		} else if strings.HasPrefix(command, "print_file:") {
 			filename := strings.TrimPrefix(command, "print_file:")
-			log.Printf("[CMD] Starte Shotgun 2: %s\n", filename)
+			log.Printf("[CMD] Starte Shotgun P2S: %s\n", filename)
 			
-			// Shotgun Runde 2: Noch mehr Varianten
-			sendMQTT(map[string]any{"print": map[string]any{"sequence_id": 2001, "command": "project_file", "param": "Metadata/slice_1.gcode", "url": filename}}) // Nur Name
-			sendMQTT(map[string]any{"print": map[string]any{"sequence_id": 2002, "command": "project_file", "param": "Metadata/slice_1.gcode", "url": "/sdcard/" + filename}}) // /sdcard/ Pfad
-			sendMQTT(map[string]any{"print": map[string]any{"sequence_id": 2003, "command": "gcode_file", "param": filename}}) // gcode_file nur Name
-			sendMQTT(map[string]any{"print": map[string]any{"sequence_id": 2004, "command": "gcode_file", "param": "/sdcard/" + filename}}) // gcode_file /sdcard/
+			// Shotgun P2S Edition: Wir probieren ALLES
+			sendMQTT(map[string]any{"print": map[string]any{"sequence_id": 3001, "command": "project_file", "param": "Metadata/slice_1.gcode", "url": filename}})
+			sendMQTT(map[string]any{"print": map[string]any{"sequence_id": 3002, "command": "project_file", "param": "Metadata/slice_1.gcode", "url": "/sdcard/" + filename}})
+			sendMQTT(map[string]any{"print": map[string]any{"sequence_id": 3003, "command": "project_file", "param": "Metadata/slice_1.gcode", "url": "file:///sdcard/" + filename}})
+			sendMQTT(map[string]any{"print": map[string]any{"sequence_id": 3004, "command": "gcode_file", "param": filename}})
+			sendMQTT(map[string]any{"print": map[string]any{"sequence_id": 3005, "command": "gcode_file", "param": "/sdcard/" + filename}})
 		}
 	}
 }
@@ -317,7 +321,7 @@ func moonrakerUploadHandler(w http.ResponseWriter, r *http.Request) {
 	os.Remove(tempPath)
 	payload := map[string]any{"print": map[string]any{"sequence_id": nextSequenceID(), "command": "gcode_file", "param": header.Filename}}
 	b, _ := json.Marshal(payload)
-	mqttClient.Publish(fmt.Sprintf("device/%s/request", c.PrinterSerial), 0, false, b)
+	mqttClient.Publish(fmt.Sprintf("device/%s/request", config.PrinterSerial), 0, false, b)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"result": "success"})
 }
