@@ -196,26 +196,17 @@ func wsEndpoint(w http.ResponseWriter, r *http.Request) {
 			sendMQTT(map[string]any{"print": map[string]any{"sequence_id": nextSequenceID(), "command": "stop"}})
 		} else if strings.HasPrefix(command, "print_file:") {
 			filename := strings.TrimPrefix(command, "print_file:")
-			log.Printf("[CMD] Starte Druck (Variante 3): %s\n", filename)
+			log.Printf("[CMD] Starte Shotgun-Diagnose für: %s\n", filename)
 			
-			// Variante 3: project_file mit relativem Pfad und STRING sequence_id
-			payload := map[string]any{
-				"print": map[string]any{
-					"sequence_id":    strconv.Itoa(nextSequenceID()),
-					"command":        "project_file",
-					"param":          "Metadata/slice_1.gcode",
-					"subtask_name":   filename,
-					"url":            filename, // Relativ zum Root
-					"bed_type":       "auto",
-					"timelapse":      true,
-					"bed_leveling":   true,
-					"flow_cali":      true,
-					"vibration_cali": true,
-					"layer_inspect":  true,
-					"ams_mapping":    []int{-1, -1, -1, -1},
-				},
-			}
-			sendMQTT(payload)
+			// Wir feuern 4 verschiedene Varianten ab. Eine davon MUSS klappen.
+			// Variante 1: Standard SD
+			sendMQTT(map[string]any{"print": map[string]any{"sequence_id": 1001, "command": "project_file", "param": "Metadata/slice_1.gcode", "url": "file:///sdcard/" + filename}})
+			// Variante 2: Standard USB
+			sendMQTT(map[string]any{"print": map[string]any{"sequence_id": 1002, "command": "project_file", "param": "Metadata/slice_1.gcode", "url": "file:///usb/" + filename}})
+			// Variante 3: GCode-Style SD
+			sendMQTT(map[string]any{"print": map[string]any{"sequence_id": 1003, "command": "gcode_file", "param": "/sdcard/" + filename}})
+			// Variante 4: GCode-Style USB
+			sendMQTT(map[string]any{"print": map[string]any{"sequence_id": 1004, "command": "gcode_file", "param": "/usb/" + filename}})
 		}
 	}
 }
