@@ -49,9 +49,7 @@ var (
 
 func loadConfig() error {
 	file, err := os.ReadFile(configPath)
-	if err != nil {
-		return err
-	}
+	if err != nil { return err }
 	configMu.Lock()
 	defer configMu.Unlock()
 	return json.Unmarshal(file, &config)
@@ -59,9 +57,7 @@ func loadConfig() error {
 
 func saveConfig(c Config) error {
 	data, err := json.MarshalIndent(c, "", "  ")
-	if err != nil {
-		return err
-	}
+	if err != nil { return err }
 	return os.WriteFile(configPath, data, 0644)
 }
 
@@ -118,11 +114,9 @@ func initMQTT() {
 	if mqttClient != nil && mqttClient.IsConnected() {
 		mqttClient.Disconnect(250)
 	}
-
 	configMu.RLock()
 	c := config
 	configMu.RUnlock()
-
 	tlsConfig := &tls.Config{InsecureSkipVerify: true}
 	opts := mqtt.NewClientOptions().
 		AddBroker(getMQTTBroker()).
@@ -130,19 +124,13 @@ func initMQTT() {
 		SetUsername("bblp").
 		SetPassword(c.PrinterAccessCode).
 		SetTLSConfig(tlsConfig)
-
 	opts.OnConnect = func(cl mqtt.Client) {
 		log.Println("[MQTT] Verbunden mit Bambu Drucker!")
 		topic := fmt.Sprintf("device/%s/report", c.PrinterSerial)
-		if token := cl.Subscribe(topic, 0, messageHandler); token.Wait() && token.Error() != nil {
-			log.Printf("[MQTT] Subscribe Fehler: %v\n", token.Error())
-		}
+		cl.Subscribe(topic, 0, messageHandler)
 	}
-
 	mqttClient = mqtt.NewClient(opts)
-	if token := mqttClient.Connect(); token.Wait() && token.Error() != nil {
-		log.Printf("[MQTT] Verbindungsfehler: %v\n", token.Error())
-	}
+	mqttClient.Connect()
 }
 
 func configHandler(w http.ResponseWriter, r *http.Request) {
@@ -158,21 +146,14 @@ func configHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == "POST" {
 		var newConfig Config
-		if err := json.NewDecoder(r.Body).Decode(&newConfig); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		if err := saveConfig(newConfig); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+		json.NewDecoder(r.Body).Decode(&newConfig)
+		saveConfig(newConfig)
 		configMu.Lock()
 		config = newConfig
 		configMu.Unlock()
 		log.Println("[CONFIG] Neue Konfiguration gespeichert. Starte MQTT neu...")
 		go initMQTT()
 		w.Write([]byte("Erfolgreich gespeichert"))
-		return
 	}
 }
 
@@ -207,10 +188,7 @@ func messageHandler(client mqtt.Client, msg mqtt.Message) {
 	clientsMu.Lock()
 	defer clientsMu.Unlock()
 	for conn := range clients {
-		if err := conn.WriteMessage(websocket.TextMessage, payload); err != nil {
-			conn.Close()
-			delete(clients, conn)
-		}
+		conn.WriteMessage(websocket.TextMessage, payload)
 	}
 }
 
@@ -247,8 +225,7 @@ func sendPrintCommand(cmd string) {
 }
 
 func wsEndpoint(w http.ResponseWriter, r *http.Request) {
-	ws, err := upgrader.Upgrade(w, r, nil)
-	if err != nil { return }
+	ws, _ := upgrader.Upgrade(w, r, nil)
 	clientsMu.Lock()
 	clients[ws] = true
 	clientsMu.Unlock()
@@ -271,13 +248,15 @@ func wsEndpoint(w http.ResponseWriter, r *http.Request) {
 			if strings.HasPrefix(command, "print_file:") {
 				filename := strings.TrimPrefix(command, "print_file:")
 				log.Printf("[CMD] Starte Druck für Datei: %s\n", filename)
+				
+				// Wir nutzen den Pfad /media/usb0/, der im Timelapse-Log auftauchte
 				payload := map[string]any{
 					"print": map[string]any{
 						"sequence_id":    nextSequenceID(),
 						"command":        "project_file",
 						"param":          "Metadata/slice_1.gcode",
 						"subtask_name":   filename,
-						"url":            "file:///usb/" + filename,
+						"url":            "/media/usb0/" + filename,
 						"bed_type":       "auto",
 						"timelapse":      true,
 						"bed_leveling":   true,
@@ -288,7 +267,7 @@ func wsEndpoint(w http.ResponseWriter, r *http.Request) {
 					},
 				}
 				b, _ := json.Marshal(payload)
-				log.Printf("[MQTT] Payload: %s\n", string(b))
+				log.Printf("[MQTT] Sende Payload: %s\n", string(b))
 				mqttClient.Publish(getCmdTopic(), 0, false, b)
 			}
 		}
@@ -416,14 +395,14 @@ func moonrakerUploadHandler(w http.ResponseWriter, r *http.Request) {
 				"command":      "project_file",
 				"param":        "Metadata/slice_1.gcode",
 				"subtask_name": header.Filename,
-				"url":          "/sdcard/" + header.Filename,
+				"url":          "/media/usb0/" + header.Filename,
 				"timelapse":    true,
 				"bed_leveling": true,
 				"flow_cali":    true,
 			},
 		}
 	} else {
-		mqttPayload = map[string]any{"print": map[string]any{"sequence_id": nextSequenceID(), "command": "gcode_file", "param": "/sdcard/" + header.Filename}}
+		mqttPayload = map[string]any{"print": map[string]any{"sequence_id": nextSequenceID(), "command": "gcode_file", "param": "/media/usb0/" + header.Filename}}
 	}
 	b, _ := json.Marshal(mqttPayload)
 	mqttClient.Publish(getCmdTopic(), 0, false, b)
