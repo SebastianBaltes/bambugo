@@ -73,14 +73,37 @@ func main() {
 	http.HandleFunc("/upload", uploadHandler)
 	
 	// Moonraker API Bridge für Orca Slicer
-	http.HandleFunc("/printer/info", moonrakerInfoHandler)
-	http.HandleFunc("/server/files/upload", moonrakerUploadHandler)
-	http.HandleFunc("/printer/objects/query", moonrakerQueryHandler)
+	http.HandleFunc("/", logRequest(rootHandler))
+	http.HandleFunc("/api/version", logRequest(octoVersionHandler))
+	http.HandleFunc("/printer/info", logRequest(moonrakerInfoHandler))
+	http.HandleFunc("/server/files/upload", logRequest(moonrakerUploadHandler))
+	http.HandleFunc("/printer/objects/query", logRequest(moonrakerQueryHandler))
 	
 	log.Printf("[HTTP] Backend läuft auf %s\n", port)
 	if err := http.ListenAndServe(port, nil); err != nil {
 		log.Fatal("[HTTP] ListenAndServe:", err)
 	}
+}
+
+func logRequest(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[HTTP] %s %s\n", r.Method, r.URL.Path)
+		h(w, r)
+	}
+}
+
+func rootHandler(w http.ResponseWriter, r *http.Request) {
+	w.Write([]byte("BambuGo Backend is running"))
+}
+
+func octoVersionHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	resp := map[string]any{
+		"api": "0.1",
+		"server": "1.3.10",
+		"text": "OctoPrint (BambuGo Bridge)",
+	}
+	json.NewEncoder(w).Encode(resp)
 }
 
 func messageHandler(client mqtt.Client, msg mqtt.Message) {
