@@ -277,7 +277,7 @@ func wsEndpoint(w http.ResponseWriter, r *http.Request) {
 						"command":        "project_file",
 						"param":          "Metadata/slice_1.gcode",
 						"subtask_name":   filename,
-						"url":            filename,
+						"url":            "file:///sdcard/" + filename,
 						"bed_type":       "auto",
 						"timelapse":      true,
 						"bed_leveling":   true,
