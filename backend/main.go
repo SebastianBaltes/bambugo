@@ -93,14 +93,21 @@ func initMQTT() {
 		SetClientID("bambugo-backend").
 		SetUsername("bblp").
 		SetPassword(c.PrinterAccessCode).
-		SetTLSConfig(tlsConfig)
+		SetTLSConfig(tlsConfig).
+		SetAutoReconnect(true).
+		SetConnectRetry(true)
 	opts.OnConnect = func(cl mqtt.Client) {
 		log.Println("[MQTT] Verbunden!")
 		topic := fmt.Sprintf("device/%s/report", c.PrinterSerial)
 		cl.Subscribe(topic, 0, messageHandler)
 	}
+	opts.OnConnectionLost = func(cl mqtt.Client, err error) {
+		log.Printf("[MQTT] Verbindung verloren: %v\n", err)
+	}
 	mqttClient = mqtt.NewClient(opts)
-	mqttClient.Connect()
+	if t := mqttClient.Connect(); t.Wait() && t.Error() != nil {
+		log.Printf("[MQTT] Verbindungsfehler: %v\n", t.Error())
+	}
 }
 
 func loadConfig() error {
@@ -209,20 +216,29 @@ func wsEndpoint(w http.ResponseWriter, r *http.Request) {
 			sendMQTT(map[string]any{"print": map[string]any{"sequence_id": nextSequenceID(), "command": "stop"}})
 		} else if strings.HasPrefix(command, "print_file:") {
 			rest := strings.TrimPrefix(command, "print_file:")
-			// Format: "filename" oder "filename:slotIndex"
-			parts := strings.SplitN(rest, ":", 2)
+			// Format: "filename" oder "filename:slotIndex" oder "filename:slotIndex:location"
+			parts := strings.SplitN(rest, ":", 3)
 			filename := parts[0]
 			amsSlot := -1
-			if len(parts) == 2 {
+			location := "usb"
+			if len(parts) >= 2 {
 				if idx, err := strconv.Atoi(parts[1]); err == nil {
 					amsSlot = idx
 				}
 			}
-			log.Printf("[CMD] Starte Druck: %s (AMS-Slot: %d)\n", filename, amsSlot)
+			if len(parts) == 3 {
+				location = parts[2]
+			}
+			log.Printf("[CMD] Starte Druck: %s (AMS-Slot: %d, Location: %s)\n", filename, amsSlot, location)
 
 			param := "Metadata/plate_1.gcode"
 			if strings.HasSuffix(filename, ".gcode") && !strings.HasSuffix(filename, ".gcode.3mf") {
 				param = filename
+			}
+
+			urlPrefix := "file:///media/usb0/"
+			if location == "internal" {
+				urlPrefix = "file:///sdcard/"
 			}
 
 			subtaskName := filename
@@ -241,7 +257,7 @@ func wsEndpoint(w http.ResponseWriter, r *http.Request) {
 					"sequence_id":             nextSequenceID(),
 					"command":                 "project_file",
 					"param":                   param,
-					"url":                     "file:///media/usb0/" + filename,
+					"url":                     urlPrefix + filename,
 					"file":                    filename,
 					"md5":                     "",
 					"subtask_name":            subtaskName,
@@ -312,22 +328,30 @@ func camHandler(w http.ResponseWriter, r *http.Request) {
 
 func filesHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	configMu.RLock()
-	c := config
-	configMu.RUnlock()
-	cmd := exec.Command("curl", "-k", "--user", "bblp:"+c.PrinterAccessCode, "ftps://"+c.PrinterIP+":990/")
-	output, _ := cmd.Output()
+	location := r.URL.Query().Get("location")
 	var files []string
-	lines := strings.Split(string(output), "\n")
-	re := regexp.MustCompile(`\d{2}:\d{2}\s+(.*\.gcode(?:\.3mf)?)$`)
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		match := re.FindStringSubmatch(line)
-		if len(match) > 1 {
-			filename := match[1]
-			// Entferne eventuelle \r
-			filename = strings.ReplaceAll(filename, "\r", "")
-			files = append(files, filename)
+	
+	if location == "internal" {
+		// Internal SD-Card is not easily accessible via FTPS on P2S
+		// For now we return an empty list or specific placeholder
+		log.Println("[Files] Internal memory requested, returning empty.")
+	} else {
+		configMu.RLock()
+		c := config
+		configMu.RUnlock()
+		cmd := exec.Command("curl", "-k", "--user", "bblp:"+c.PrinterAccessCode, "ftps://"+c.PrinterIP+":990/")
+		output, _ := cmd.Output()
+		
+		lines := strings.Split(string(output), "\n")
+		re := regexp.MustCompile(`\d{2}:\d{2}\s+(.*\.gcode(?:\.3mf)?)$`)
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			match := re.FindStringSubmatch(line)
+			if len(match) > 1 {
+				filename := match[1]
+				filename = strings.ReplaceAll(filename, "\r", "")
+				files = append(files, filename)
+			}
 		}
 	}
 	json.NewEncoder(w).Encode(files)
