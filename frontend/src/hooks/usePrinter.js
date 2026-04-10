@@ -1,6 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
 
-export function usePrinter(url = `ws://${window.location.hostname}:8080/ws`) {
+const defaultWsUrl = () => {
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${proto}//${window.location.host}/ws`;
+};
+
+export function usePrinter(url = defaultWsUrl()) {
   const [data, setData] = useState(null);
   const [connected, setConnected] = useState(false);
   const wsRef = useRef(null);

@@ -1,7 +1,26 @@
-
+# Build artifacts
 backend/main
-backend/log.txt
-backend/config.json
-*.log
-bambugo-backend
 backend/bambugo-backend
+bambugo-backend
+*.log
+backend/log.txt
+
+# Secrets
+backend/config.json
+data/
+.env
+# go2rtc.yaml is generated from config.json at runtime; the seed lives in shared/
+go2rtc.yaml
+!shared/go2rtc.yaml
+
+# Editor
+.idea/
+
+# Frontend build output
+frontend/dist/
+frontend/node_modules/
+
+# Embedded frontend: placeholder index.html is committed,
+# real build artifacts are copied in by Docker / npm build
+backend/web/*
+!backend/web/index.html

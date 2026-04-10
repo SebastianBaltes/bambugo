@@ -7,18 +7,23 @@ function App() {
   const [files, setFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [configLoaded, setConfigLoaded] = useState(false);
+  const [needsSetup, setNeedsSetup] = useState(false);
   const [config, setConfig] = useState({
     printer_ip: '',
     printer_serial: '',
     printer_access_code: '',
   });
 
-  const backendUrl = `http://${window.location.hostname}:8080`;
+  const backendUrl = '';
 
   useEffect(() => {
-    fetchFiles();
     fetchConfig();
   }, []);
+
+  useEffect(() => {
+    if (configLoaded && !needsSetup) fetchFiles();
+  }, [configLoaded, needsSetup]);
 
   const fetchConfig = async () => {
     try {
@@ -26,14 +31,28 @@ function App() {
       if (res.ok) {
         const data = await res.json();
         setConfig(data);
+        const incomplete = !data.printer_ip || !data.printer_serial || !data.printer_access_code;
+        setNeedsSetup(incomplete);
+        if (incomplete) setShowSettings(true);
+      } else {
+        setNeedsSetup(true);
+        setShowSettings(true);
       }
     } catch (e) {
       console.error('Fehler beim Laden der Config:', e);
+      setNeedsSetup(true);
+      setShowSettings(true);
+    } finally {
+      setConfigLoaded(true);
     }
   };
 
   const saveConfig = async (e) => {
     e.preventDefault();
+    if (!config.printer_ip || !config.printer_serial || !config.printer_access_code) {
+      alert('Bitte alle Felder ausfüllen.');
+      return;
+    }
     try {
       const res = await fetch(`${backendUrl}/api/config`, {
         method: 'POST',
@@ -42,6 +61,7 @@ function App() {
       });
       if (res.ok) {
         alert('Konfiguration gespeichert! Backend verbindet neu...');
+        setNeedsSetup(false);
         setShowSettings(false);
       } else {
         alert('Fehler beim Speichern.');
@@ -128,6 +148,9 @@ function App() {
         {showSettings ? (
           <div className="card settings-card">
             <h2>Konfiguration</h2>
+            {needsSetup && (
+              <p className="setup-hint">Willkommen! Bitte gib die Zugangsdaten deines Bambu Lab Druckers ein (zu finden im Drucker-Menü unter Netzwerk / LAN-Modus).</p>
+            )}
             <form onSubmit={saveConfig}>
               <div className="form-group">
                 <label>Drucker IP:</label>
@@ -155,7 +178,9 @@ function App() {
               </div>
               <div className="button-group">
                 <button type="submit" className="btn btn-on">Speichern</button>
-                <button type="button" className="btn btn-off" onClick={() => setShowSettings(false)}>Abbrechen</button>
+                {!needsSetup && (
+                  <button type="button" className="btn btn-off" onClick={() => setShowSettings(false)}>Abbrechen</button>
+                )}
               </div>
             </form>
           </div>
@@ -172,7 +197,7 @@ function App() {
                   playsInline 
                   muted 
                   controls
-                  src={`http://${window.location.hostname}:1984/api/stream.mp4?src=bambu_cam`} 
+                  src={`http://${window.location.hostname}:1984/api/stream.mp4?src=bambu`}
                 />
               </div>
             </div>

@@ -1,0 +1,28 @@
+services:
+  bambugo:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: bambugo:latest
+    container_name: bambugo
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data
+      - ./shared:/shared
+    environment:
+      - BAMBUGO_CONFIG=/data/config.json
+      - BAMBUGO_GO2RTC_YAML=/shared/go2rtc.yaml
+
+  go2rtc:
+    image: alexxit/go2rtc:latest
+    container_name: bambugo-go2rtc
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./shared:/config
+    depends_on:
+      - bambugo
+    # Waits for bambugo to generate /shared/go2rtc.yaml on first run.
+    command: ["-config", "/config/go2rtc.yaml"]

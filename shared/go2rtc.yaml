@@ -1,0 +1,8 @@
+# Seed config — overwritten by bambugo backend on startup and config save.
+streams: {}
+api:
+  listen: :1984
+rtsp:
+  listen: :8554
+webrtc:
+  listen: :8555
