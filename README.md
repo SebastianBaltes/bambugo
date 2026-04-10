@@ -4,13 +4,11 @@
 <img src="assets/Screenshot_2.png" height="400"/>
 <img src="assets/Screenshot_3.png" height="400"/>
 
-**BambuGo** is a lightweight, self-hosted bridge and dashboard for Bambu Lab printers (P1S, P1P, X1C). It solves the common stability issues with the official Bambu Network plugin in Orca Slicer by bridging the printer to a standard **Moonraker/Klipper API**.
-
-Additionally, it provides a mobile-first React dashboard to monitor and control your printer from anywhere (especially useful when combined with Tailscale).
+**BambuGo** is a lightweight, self-hosted dashboard for Bambu Lab printers (P1S, P1P, X1C). 
+It provides a mobile-first React dashboard to monitor and control your printer from anywhere (especially useful when combined with Tailscale).
 
 ## Features
 
-- 🚀 **Moonraker Bridge:** Use your Bambu printer in Orca Slicer via the stable "Klipper" connection type.
 - 📱 **Mobile Dashboard:** A responsive React UI for monitoring temperatures, progress, and AMS status.
 - 📹 **Live Camera:** Integrated support for the RTSPS camera stream (via `go2rtc`), bypassing the proprietary MJPEG port.
 - 💡 **Remote Control:** Toggle chamber lights, pause, resume, or stop prints directly from the web.
@@ -22,7 +20,6 @@ Additionally, it provides a mobile-first React dashboard to monitor and control 
 
 ```mermaid
 flowchart LR
-    Orca["Orca Slicer<br/>(Klipper/Octo host)"]
     Browser["Browser / Mobile<br/>(React Dashboard)"]
 
     subgraph host["Host (Raspberry Pi / Linux)"]
@@ -33,7 +30,6 @@ flowchart LR
 
     Printer[("Bambu Lab P1S / P1P / X1C")]
 
-    Orca -->|HTTP Moonraker API| Backend
     Browser -->|HTTP + WebSocket| Backend
     Browser -->|MSE / WebRTC| Go2rtc
     Backend <-->|MQTT TLS :8883<br/>FTPS :990| Printer
@@ -68,18 +64,6 @@ Open `http://<your-host>:8080` in a browser. On first start, a **setup dialog** 
 After saving, the backend reconnects automatically and `go2rtc` picks up the camera stream. **No credentials are ever hardcoded or committed.** Your `config.json` lives on the host in `./data/` and is git-ignored.
 
 > ⚠️ If you need to restart the camera stream after the first configuration, run `docker compose restart go2rtc`.
-
-## Orca Slicer Integration
-
-Say goodbye to Bambu Network Plugin crashes!
-
-1. Open **Orca Slicer**.
-2. Go to your **Printer Settings**.
-3. In the **Advanced** section, check **"Use 3rd-party print host"**.
-4. Click the **WLAN/WiFi icon** next to the printer name.
-5. Set **Host Type** to **"Octo/Klipper"**.
-6. Set **Hostname** to your host's IP (e.g., `http://192.168.1.50:8080`).
-7. Click **Test** to confirm the connection.
 
 ## Development
 
