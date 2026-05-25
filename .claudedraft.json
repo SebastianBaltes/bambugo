@@ -1,6 +1,6 @@
 {
   "webapp": {
-    "port": 8080,
+    "port": 5181,
     "start_cmd": "docker compose up -d",
     "path": "/"
   }
